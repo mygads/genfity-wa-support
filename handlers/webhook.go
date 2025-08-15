@@ -129,6 +129,8 @@ func processWebhookEvent(webhookData GenfityWebhookData) error {
 	switch webhookData.Event {
 	case "Message":
 		return processMessageEvent(webhookData)
+	case "MessageSent":
+		return processMessageSentEvent(webhookData)
 	case "ReadReceipt":
 		return processReadReceiptEvent(webhookData)
 	case "Presence":
@@ -369,6 +371,179 @@ func processMessageEvent(webhookData GenfityWebhookData) error {
 	return db.Create(&message).Error
 }
 
+// processMessageSentEvent processes message sent events (outgoing messages from our user)
+func processMessageSentEvent(webhookData GenfityWebhookData) error {
+	data := webhookData.Data
+
+	// Extract message info from the new format structure
+	var messageInfo map[string]interface{}
+	var messageData map[string]interface{}
+
+	if info, ok := data["Info"].(map[string]interface{}); ok {
+		messageInfo = info
+	} else {
+		// Fallback to old format
+		messageInfo = data
+	}
+
+	if message, ok := data["Message"].(map[string]interface{}); ok {
+		messageData = message
+	} else {
+		// Fallback to old format
+		messageData = data
+	}
+
+	// Extract basic message info from Info section
+	messageID, _ := messageInfo["ID"].(string)
+	if messageID == "" {
+		messageID, _ = data["MessageID"].(string)
+		if messageID == "" {
+			messageID, _ = data["id"].(string)
+		}
+	}
+
+	// For MessageSent, IsFromMe should be true (we sent the message)
+	fromMe := true
+	if isFromMe, ok := messageInfo["IsFromMe"].(bool); ok {
+		fromMe = isFromMe
+	}
+
+	// Get session owner's JID as sender (since we sent the message)
+	db := database.GetDB()
+	var session models.WhatsAppSession
+	var senderJID string
+	if err := db.Where("user_token = ?", webhookData.UserToken).First(&session).Error; err == nil {
+		if session.JID != "" {
+			senderJID = session.JID
+		}
+	}
+
+	// Chat field contains the recipient
+	to, _ := messageInfo["Chat"].(string)
+	if to == "" {
+		to, _ = data["to"].(string)
+	}
+
+	from := senderJID // We are the sender
+	if from == "" {
+		// Fallback if session JID not available
+		from = webhookData.UserToken + "@s.whatsapp.net"
+	}
+
+	messageType, _ := messageInfo["MessageType"].(string)
+	if messageType == "" {
+		messageType, _ = messageInfo["Type"].(string)
+		if messageType == "" {
+			messageType, _ = data["type"].(string)
+		}
+	}
+
+	timestampStr, _ := messageInfo["Timestamp"].(string)
+	if timestampStr == "" {
+		timestampStr, _ = data["timestamp"].(string)
+	}
+
+	// Parse timestamp
+	messageTimestamp, err := time.Parse(time.RFC3339, timestampStr)
+	if err != nil {
+		// Try parsing as Unix timestamp if RFC3339 fails
+		if timestampInt, ok := messageInfo["Timestamp"].(float64); ok {
+			messageTimestamp = time.Unix(int64(timestampInt), 0)
+		} else if timestampInt, ok := data["timestamp"].(float64); ok {
+			messageTimestamp = time.Unix(int64(timestampInt), 0)
+		} else {
+			log.Printf("Error parsing timestamp: %v", err)
+			messageTimestamp = time.Now()
+		}
+	}
+
+	// Create WhatsApp message record
+	message := models.WhatsAppMessage{
+		MessageID:        messageID,
+		From:             from,
+		To:               to,
+		FromMe:           fromMe,
+		PushName:         "", // Not applicable for sent messages
+		MessageType:      messageType,
+		MessageTimestamp: messageTimestamp,
+		UserToken:        webhookData.UserToken,
+		Status:           "sent",
+		Processed:        false,
+	}
+
+	// Extract content based on message type
+	var body string
+	switch messageType {
+	case "text":
+		// Handle both conversation and extendedTextMessage
+		if conversation, ok := messageData["conversation"].(string); ok {
+			body = conversation
+		} else if extendedText, ok := messageData["extendedTextMessage"].(map[string]interface{}); ok {
+			if text, ok := extendedText["text"].(string); ok {
+				body = text
+			}
+		} else if bodyText, ok := messageData["body"].(string); ok {
+			body = bodyText
+		}
+		message.Body = body
+
+	case "image", "video", "audio", "document", "sticker":
+		if bodyText, ok := messageData["body"].(string); ok {
+			message.Body = bodyText
+		}
+		if caption, ok := messageData["caption"].(string); ok {
+			message.Caption = caption
+		}
+		// Handle media from different sources
+		if media, ok := messageData["media"].(map[string]interface{}); ok {
+			message.MediaData = models.JSONB(media)
+		} else if imageMessage, ok := messageData["imageMessage"].(map[string]interface{}); ok {
+			message.MediaData = models.JSONB(imageMessage)
+		} else if videoMessage, ok := messageData["videoMessage"].(map[string]interface{}); ok {
+			message.MediaData = models.JSONB(videoMessage)
+		} else if audioMessage, ok := messageData["audioMessage"].(map[string]interface{}); ok {
+			message.MediaData = models.JSONB(audioMessage)
+		} else if documentMessage, ok := messageData["documentMessage"].(map[string]interface{}); ok {
+			message.MediaData = models.JSONB(documentMessage)
+		} else if stickerMessage, ok := messageData["stickerMessage"].(map[string]interface{}); ok {
+			message.MediaData = models.JSONB(stickerMessage)
+		}
+
+	case "location":
+		if location, ok := messageData["location"].(map[string]interface{}); ok {
+			message.LocationData = models.JSONB(location)
+		} else if locationMessage, ok := messageData["locationMessage"].(map[string]interface{}); ok {
+			message.LocationData = models.JSONB(locationMessage)
+		}
+
+	case "contact":
+		if contact, ok := messageData["contact"].(map[string]interface{}); ok {
+			message.ContactData = models.JSONB(contact)
+		} else if contactMessage, ok := messageData["contactMessage"].(map[string]interface{}); ok {
+			message.ContactData = models.JSONB(contactMessage)
+		}
+	}
+
+	// Handle quoted/replied messages
+	if quotedMessage, ok := messageData["quotedMessage"].(map[string]interface{}); ok {
+		message.QuotedMessage = models.JSONB(quotedMessage)
+	}
+
+	// Handle context info for extended text messages
+	if extendedText, ok := messageData["extendedTextMessage"].(map[string]interface{}); ok {
+		if contextInfo, ok := extendedText["contextInfo"].(map[string]interface{}); ok {
+			message.QuotedMessage = models.JSONB(contextInfo)
+		}
+	}
+
+	// Handle mentions
+	if mentionedJid, ok := messageData["mentionedJid"].([]interface{}); ok {
+		message.MentionedJid = models.JSONB{"jids": mentionedJid}
+	}
+
+	return db.Create(&message).Error
+}
+
 // processReadReceiptEvent processes read receipt events
 func processReadReceiptEvent(webhookData GenfityWebhookData) error {
 	data := webhookData.Data
@@ -425,12 +600,12 @@ func processReadReceiptEvent(webhookData GenfityWebhookData) error {
 
 	// For ReadReceipt, the logic should be:
 	// - sender = who performed the read/delivered action
-	// - chatJid = the conversation/chat ID  
+	// - chatJid = the conversation/chat ID
 	// - For person-to-person chat, we need to determine who is the message owner
-	
+
 	var messageOwner string
 	db := database.GetDB()
-	
+
 	// Get session owner's JID to determine message flow
 	var session models.WhatsAppSession
 	if err := db.Where("user_token = ?", webhookData.UserToken).First(&session).Error; err == nil {
@@ -441,14 +616,14 @@ func processReadReceiptEvent(webhookData GenfityWebhookData) error {
 
 	// Determine from and to based on who read whose message
 	var from, to string
-	
+
 	if sender == messageOwner {
 		// Our session owner read a message - message was sent TO us by chatJid person
-		from = chatJid  // Original message sender
-		to = sender     // Our session owner (who read it)
+		from = chatJid // Original message sender
+		to = sender    // Our session owner (who read it)
 	} else {
 		// External person read our message - message was sent BY us to external person
-		from = messageOwner // Our session owner (original message sender) 
+		from = messageOwner // Our session owner (original message sender)
 		to = sender         // External person (who read it)
 	}
 
@@ -457,13 +632,25 @@ func processReadReceiptEvent(webhookData GenfityWebhookData) error {
 	if msgIds, ok := eventInfo["MessageIDs"].([]interface{}); ok {
 		messageIds = models.JSONB{"ids": msgIds}
 
-		// Also update the message status in WhatsAppMessage table
-		go updateMessageStatus(msgIds, receiptType, eventTimestamp, webhookData.UserToken)
+		// Check for duplicates and update message status
+		go updateMessageStatusWithDuplicateCheck(msgIds, receiptType, eventTimestamp, webhookData.UserToken)
 	} else if msgIds, ok := data["messageIds"].([]interface{}); ok {
 		messageIds = models.JSONB{"ids": msgIds}
 
-		// Also update the message status in WhatsAppMessage table
-		go updateMessageStatus(msgIds, receiptType, eventTimestamp, webhookData.UserToken)
+		// Check for duplicates and update message status
+		go updateMessageStatusWithDuplicateCheck(msgIds, receiptType, eventTimestamp, webhookData.UserToken)
+	}
+
+	// Check if this exact receipt already exists to prevent duplicates
+	var existingCount int64
+	db.Model(&models.WhatsAppReadReceipt{}).
+		Where("message_ids = ? AND receipt_type = ? AND user_token = ?",
+			messageIds, receiptType, webhookData.UserToken).
+		Count(&existingCount)
+
+	if existingCount > 0 {
+		log.Printf("Duplicate ReadReceipt ignored: %s %s", receiptType, messageIds)
+		return nil // Skip duplicate
 	}
 
 	receipt := models.WhatsAppReadReceipt{
@@ -635,12 +822,23 @@ func shouldFilterMessage(messageType string, data map[string]interface{}, from s
 	return false
 }
 
-// updateMessageStatus updates the status of messages in the database
-func updateMessageStatus(messageIds []interface{}, status string, timestamp time.Time, userToken string) {
+// updateMessageStatusWithDuplicateCheck updates message status with duplicate prevention
+func updateMessageStatusWithDuplicateCheck(messageIds []interface{}, status string, timestamp time.Time, userToken string) {
 	db := database.GetDB()
 
 	for _, msgId := range messageIds {
 		if messageID, ok := msgId.(string); ok {
+			// Check if this exact status already exists for this message
+			var existingCount int64
+			db.Model(&models.WhatsAppMessageStatus{}).
+				Where("message_id = ? AND status = ? AND user_token = ?", messageID, status, userToken).
+				Count(&existingCount)
+
+			if existingCount > 0 {
+				log.Printf("Duplicate message status ignored: %s %s", messageID, status)
+				continue // Skip duplicate
+			}
+
 			// Create message status record
 			messageStatus := models.WhatsAppMessageStatus{
 				MessageID:      messageID,
@@ -650,9 +848,12 @@ func updateMessageStatus(messageIds []interface{}, status string, timestamp time
 			}
 
 			// Insert status record
-			db.Create(&messageStatus)
+			if err := db.Create(&messageStatus).Error; err != nil {
+				log.Printf("Error creating message status: %v", err)
+				continue
+			}
 
-			// Also update the main message record status
+			// Also update the main message record status (only if it's a progression)
 			var statusToUpdate string
 			switch status {
 			case "delivered":
@@ -663,11 +864,32 @@ func updateMessageStatus(messageIds []interface{}, status string, timestamp time
 				statusToUpdate = status
 			}
 
-			db.Model(&models.WhatsAppMessage{}).
-				Where("message_id = ? AND user_token = ?", messageID, userToken).
-				Update("status", statusToUpdate)
+			// Only update if the new status is a progression (sent -> delivered -> read)
+			statusPriority := map[string]int{
+				"sent":      1,
+				"delivered": 2,
+				"read":      3,
+			}
+
+			var currentMessage models.WhatsAppMessage
+			if err := db.Where("message_id = ? AND user_token = ?", messageID, userToken).First(&currentMessage).Error; err == nil {
+				currentPriority := statusPriority[currentMessage.Status]
+				newPriority := statusPriority[statusToUpdate]
+
+				if newPriority > currentPriority {
+					db.Model(&models.WhatsAppMessage{}).
+						Where("message_id = ? AND user_token = ?", messageID, userToken).
+						Update("status", statusToUpdate)
+				}
+			}
 		}
 	}
+}
+
+// updateMessageStatus updates the status of messages in the database (legacy function)
+func updateMessageStatus(messageIds []interface{}, status string, timestamp time.Time, userToken string) {
+	// Use the new duplicate check function
+	updateMessageStatusWithDuplicateCheck(messageIds, status, timestamp, userToken)
 }
 
 // autoStopTyping automatically sets typing status to paused after 10 seconds
