@@ -1,127 +1,80 @@
 services:
-  # ==========================================
-  # Database Initialization Service
-  # Creates database if not exists, then exits
-  # ==========================================
-  db-init:
-    profiles: ["dev", "prod"]
-    image: postgres:16
-    environment:
-      - PGUSER=${DB_USER:-}
-      - PGPASSWORD=${DB_PASSWORD:-}
-      - PGHOST=${DB_HOST:-}
-      - PGPORT=${DB_PORT:-}
-      - DB_NAME=${DB_NAME:-}
-    networks:
-      - genfity-wuzapi_wuzapi-network
-    command: >
-      bash -c "
-        echo 'Checking if database ${DB_NAME} exists...'
-        if psql -h ${DB_HOST} -U ${DB_USER} -lqt | cut -d \\| -f 1 | grep -qw ${DB_NAME}; then
-          echo 'Database ${DB_NAME} already exists'
-        else
-          echo 'Creating database ${DB_NAME}...'
-          createdb -h ${DB_HOST} -U ${DB_USER} ${DB_NAME}
-          echo 'Database ${DB_NAME} created successfully'
-        fi
-        echo 'Database initialization completed'
-      "
-    restart: "no"
-
-  # ==========================================
-  # Application Service (available in dev + prod)
-  # ==========================================
-  genfity-event-api:
-    profiles: ["dev", "prod"]
+  genfity-chat-ai:
     build:
       context: .
       dockerfile: Dockerfile
-    ports:
-      - "${PORT:-8070}:${PORT:-8070}"
+    container_name: genfity-chat-ai
     environment:
-      # Core config
-      - DB_HOST=${DB_HOST:-}
-      - DB_PORT=${DB_PORT:-}
-      - DB_USER=${DB_USER:-}
-      - DB_PASSWORD=${DB_PASSWORD:-}
-      - DB_NAME=${DB_NAME:-}
-      - DB_SSLMODE=${DB_SSLMODE:-}
-      - PORT=${PORT:-}
-      - GIN_MODE=${GIN_MODE:-}
-      - WEBHOOK_VERIFY_TOKEN=${WEBHOOK_VERIFY_TOKEN:-}
-      - TZ=${TZ:-Asia/Jakarta}
-      # Domain & SSL (only used when prod profile with nginx-proxy + acme-companion)
-      - VIRTUAL_HOST=${GENFITY_DOMAIN:-}
-      - LETSENCRYPT_HOST=${GENFITY_DOMAIN:-}
-      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-}
-    depends_on:
-      db-init:
-        condition: service_completed_successfully
-    networks:
-      - genfity-wuzapi_wuzapi-network
-    restart: on-failure
-
-  # ==========================================
-  # Nginx Reverse Proxy (prod only)
-  # ==========================================
-  nginx-proxy:
-    profiles: ["prod"]
-    image: nginxproxy/nginx-proxy:alpine
-    container_name: genfity-event-nginx-proxy
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - DB_SSLMODE=${DB_SSLMODE}
+      - PORT=${PORT}
+      - TZ=${TZ}
+      - GIN_MODE=${GIN_MODE}
+      - WEBHOOK_VERIFY_TOKEN=${WEBHOOK_VERIFY_TOKEN}
+      - ADMIN_TOKEN=${ADMIN_TOKEN}
+      - WA_SERVER_URL=${WA_SERVER_URL}
+      - WA_ADMIN_TOKEN=${WA_ADMIN_TOKEN}
+      - LOG_LEVEL=${LOG_LEVEL}
     ports:
-      - "8080:80"
-      - "8443:443"
-    volumes:
-      - nginx_certs:/etc/nginx/certs
-      - nginx_vhost:/etc/nginx/vhost.d
-      - nginx_html:/usr/share/nginx/html
-      - /var/run/docker.sock:/tmp/docker.sock:ro
+      - "${PORT}:${PORT}"
     networks:
-      - genfity-wuzapi_wuzapi-network
-    restart: unless-stopped
-    labels:
-      - "com.github.nginx-proxy.nginx=true"
-
-  # ==========================================
-  # Let's Encrypt ACME Companion (prod only)
-  # ==========================================
-  acme-companion:
-    profiles: ["prod"]
-    image: nginxproxy/acme-companion
-    container_name: genfity-event-acme-companion
+      - genfity-network
     depends_on:
-      - nginx-proxy
-    environment:
-      - DEFAULT_EMAIL=${LETSENCRYPT_EMAIL:-}
-      - NGINX_PROXY_CONTAINER=genfity-event-nginx-proxy
-    volumes:
-      - nginx_certs:/etc/nginx/certs
-      - nginx_vhost:/etc/nginx/vhost.d
-      - nginx_html:/usr/share/nginx/html
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - genfity-wuzapi_wuzapi-network
+      - db-check
     restart: unless-stopped
+    healthcheck:
+      # Use curl -f to perform a GET and return non-zero on non-2xx responses.
+      # This avoids HEAD requests (wget --spider) which some handlers don't support.
+      test: ["CMD", "curl", "-f", "http://localhost:${PORT}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  db-check:
+    image: postgres:16
+    container_name: eventapi-db-check
+    environment:
+      - PGHOST=${DB_HOST}
+      - PGPORT=${DB_PORT}
+      - PGUSER=${DB_USER}
+      - PGPASSWORD=${DB_PASSWORD}
+      - PGDATABASE=${DB_NAME}
+    networks:
+      - genfity-network
+    command: >
+      sh -c "
+        echo 'Checking database connection...'
+        until pg_isready -h ${DB_HOST} -p ${DB_PORT} -U ${DB_USER} -d postgres; do
+          echo 'Waiting for PostgreSQL server...'
+          sleep 2
+        done
+        echo 'PostgreSQL server is ready!'
+        
+        echo 'Checking if database exists...'
+        if psql -h ${DB_HOST} -U ${DB_USER} -d postgres -lqt | cut -d \\| -f 1 | grep -qw ${DB_NAME}; then
+          echo 'Database ${DB_NAME} exists'
+        else
+          echo 'Database ${DB_NAME} does not exist, creating...'
+          psql -h ${DB_HOST} -U ${DB_USER} -d postgres -c 'CREATE DATABASE ${DB_NAME};'
+          echo 'Database ${DB_NAME} created'
+        fi
+        
+        echo 'Running migrations if needed...'
+        echo 'Database check completed successfully'
+      "
 
 networks:
-  genfity-wuzapi_wuzapi-network:
+  genfity-network:
     external: true
-
-volumes:
-  nginx_certs:
-  nginx_vhost:
-  nginx_html:
+    name: server_genfity-network
 
 # ==========================================
 # Usage:
-#   Dev (app only - uses existing PostgreSQL):
-#     1. Ensure genfity-wuzapi PostgreSQL is running on port 5432
-#     2. Run: docker compose --profile dev up -d
-#     3. Database will be auto-created if not exists
-#     4. GORM will auto-migrate tables on app startup
-#
-#   Prod (app + nginx proxy + automatic SSL):
-#     1. Set GENFITY_DOMAIN & LETSENCRYPT_EMAIL in .env
-#     2. Run: docker compose --profile prod up -d
-#     3. SSL certificates auto-created & renewed
+#   Copy .env.example to .env and configure
+#   Then run: docker compose up -d
 # ==========================================
