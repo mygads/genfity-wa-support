@@ -197,3 +197,59 @@ type WhatsAppServerResponse struct {
 	Data    []WhatsAppServerUser `json:"data"`
 	Success bool                 `json:"success"`
 }
+
+// UserSettings represents user account settings
+type UserSettings struct {
+	ID              uint      `json:"id" gorm:"primaryKey"`
+	UserToken       string    `json:"user_token" gorm:"uniqueIndex;not null"`
+	ChatLogEnabled  bool      `json:"chat_log_enabled" gorm:"default:false"`
+	AutoReadEnabled bool      `json:"auto_read_enabled" gorm:"default:false"`
+	WebhookURL      string    `json:"webhook_url"`
+	DisplayName     string    `json:"display_name"`
+	IsActive        bool      `json:"is_active" gorm:"default:true"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// ChatRoom represents a chat conversation
+type ChatRoom struct {
+	ID           uint      `json:"id" gorm:"primaryKey"`
+	ChatID       string    `json:"chat_id" gorm:"uniqueIndex;not null"` // combination of user_token + contact_jid
+	UserToken    string    `json:"user_token" gorm:"index;not null"`
+	ContactJID   string    `json:"contact_jid" gorm:"index;not null"`
+	ContactName  string    `json:"contact_name"`
+	ChatType     string    `json:"chat_type" gorm:"default:'individual'"` // individual, group
+	IsGroup      bool      `json:"is_group" gorm:"default:false"`
+	GroupName    string    `json:"group_name"`
+	LastMessage  string    `json:"last_message" gorm:"type:text"`
+	LastSender   string    `json:"last_sender"` // 'user' or 'contact'
+	LastActivity time.Time `json:"last_activity" gorm:"autoUpdateTime"`
+	UnreadCount  int       `json:"unread_count" gorm:"default:0"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// ChatMessage represents individual messages in chat rooms with status tracking
+type ChatMessage struct {
+	ID               uint       `json:"id" gorm:"primaryKey"`
+	MessageID        string     `json:"message_id" gorm:"uniqueIndex;not null"`
+	ChatRoomID       uint       `json:"chat_room_id" gorm:"index;not null"`
+	ChatID           string     `json:"chat_id" gorm:"index;not null"`
+	UserToken        string     `json:"user_token" gorm:"index;not null"`
+	SenderJID        string     `json:"sender_jid" gorm:"index;not null"`
+	SenderType       string     `json:"sender_type" gorm:"not null"` // 'user' or 'contact'
+	MessageType      string     `json:"message_type" gorm:"not null"`
+	Content          string     `json:"content" gorm:"type:text"`
+	Caption          string     `json:"caption" gorm:"type:text"`
+	MediaData        JSONB      `json:"media_data" gorm:"type:jsonb"`
+	QuotedMessageID  string     `json:"quoted_message_id"`
+	Status           string     `json:"status" gorm:"default:'sent'"` // sent, delivered, read
+	MessageTimestamp time.Time  `json:"message_timestamp" gorm:"not null;index"`
+	DeliveredAt      *time.Time `json:"delivered_at"`
+	ReadAt           *time.Time `json:"read_at"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+
+	// Relations
+	ChatRoom *ChatRoom `json:"chat_room,omitempty" gorm:"foreignKey:ChatRoomID"`
+}

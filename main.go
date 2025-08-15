@@ -37,29 +37,36 @@ func main() {
 		c.Next()
 	})
 
-	// Routes
-	api := router.Group("/api/v1")
+	// Admin routes - requires bearer token authentication
+	admin := router.Group("/admin")
+	admin.Use(handlers.AdminAuthMiddleware())
 	{
-		// Health check
-		api.GET("/health", handlers.HealthCheck)
+		// User management
+		admin.GET("/users", handlers.AdminGetUsers)
+		admin.GET("/users/:user_token", handlers.AdminGetUser)
+		admin.PUT("/users/:user_token/update", handlers.AdminUpdateUser)
 
-		// Data retrieval routes
-		api.GET("/messages", handlers.GetMessages)
-		api.GET("/events", handlers.GetWebhookEvents)
-		api.GET("/users", handlers.GetUsers)
-		api.GET("/users/:user_token/stats", handlers.GetUserStats)
+		// Session management
+		admin.GET("/sessions", handlers.AdminGetSessions)
+		admin.GET("/sessions/:user_token", handlers.AdminGetUserSessions)
 
-		// WhatsApp session management
-		api.GET("/sessions", handlers.GetSessions)
-		api.GET("/sessions/:user_token/qr", handlers.GetSessionQR)
-		api.GET("/sessions/sync", handlers.SyncSessionStatus) // Trigger sync with WA server
-
-		// Message status tracking
-		api.GET("/message-statuses", handlers.GetMessageStatuses)
-
-		// Chat presence (typing) tracking
-		api.GET("/chat-presences", handlers.GetChatPresences)
+		// Event monitoring
+		admin.GET("/event", handlers.AdminGetEvents)
 	}
+
+	// User routes - also requires bearer token authentication
+	user := router.Group("/user")
+	user.Use(handlers.AdminAuthMiddleware())
+	{
+		// Chat management
+		user.GET("/chat/:user_token", handlers.GetUserChats)
+		user.GET("/message/:user_token/:chat_id", handlers.GetChatMessages)
+		user.GET("/event/:user_token", handlers.GetUserEvents)
+	}
+
+	// Public routes (no authentication required)
+	router.GET("/health", handlers.HealthCheck)
+	router.GET("/sessions/sync", handlers.SyncSessionStatus)
 
 	// Webhook routes - for receiving events from various platforms
 	webhooks := router.Group("/webhook")

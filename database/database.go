@@ -43,6 +43,9 @@ func InitDatabase() {
 		&models.WhatsAppHistorySync{},
 		&models.WhatsAppSession{},
 		&models.WhatsAppMessageStatus{},
+		&models.UserSettings{},
+		&models.ChatRoom{},
+		&models.ChatMessage{},
 	)
 	if err != nil {
 		log.Fatal("Failed to migrate database:", err)

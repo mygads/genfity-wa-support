@@ -15,6 +15,7 @@ import (
 	"genfity-event-api/models"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // DirectWuzAPIWebhookData represents the actual structure sent by WuzAPI
@@ -73,6 +74,20 @@ func HandleWhatsAppWebhook(c *gin.Context) {
 	log.Printf("DEBUG: Token: %s", wuzapiData.Token)
 	log.Printf("DEBUG: Event data: %+v", wuzapiData.Event)
 
+	// Check user settings to see if chat log is enabled
+	db := database.GetDB()
+	var userSettings models.UserSettings
+	if err := db.Where("user_token = ?", wuzapiData.Token).First(&userSettings).Error; err != nil {
+		// Create default user settings with chat log disabled
+		userSettings = models.UserSettings{
+			UserToken:      wuzapiData.Token,
+			ChatLogEnabled: false, // Default: disabled
+			IsActive:       true,
+		}
+		db.Create(&userSettings)
+		log.Printf("Created default user settings for token: %s (chat log disabled)", wuzapiData.Token)
+	}
+
 	// Convert to legacy format for compatibility with existing processing functions
 	webhookData := GenfityWebhookData{
 		Event:     wuzapiData.Type,
@@ -83,8 +98,6 @@ func HandleWhatsAppWebhook(c *gin.Context) {
 
 	// Convert raw webhook data to JSON string for storage
 	rawDataJSON, _ := json.Marshal(wuzapiData)
-
-	db := database.GetDB()
 
 	// Store the raw webhook event first
 	webhookEvent := models.GenEventWebhook{
@@ -104,9 +117,9 @@ func HandleWhatsAppWebhook(c *gin.Context) {
 
 	log.Printf("DEBUG: Stored webhook event with ID: %d", webhookEvent.ID)
 
-	// Process the event based on type
+	// Process the event based on type and user settings
 	go func() {
-		if err := processWebhookEvent(webhookData); err != nil {
+		if err := processWebhookEventWithSettings(webhookData, userSettings); err != nil {
 			log.Printf("Error processing webhook event: %v", err)
 			// Update the webhook event as failed to process
 			db.Model(&webhookEvent).Update("processed", false)
@@ -122,6 +135,33 @@ func HandleWhatsAppWebhook(c *gin.Context) {
 	}()
 
 	c.JSON(http.StatusOK, gin.H{"status": "success"})
+}
+
+// processWebhookEventWithSettings processes different types of webhook events based on user settings
+func processWebhookEventWithSettings(webhookData GenfityWebhookData, userSettings models.UserSettings) error {
+	// Always process session-related events regardless of chat log setting
+	switch webhookData.Event {
+	case "Connected", "QR", "Disconnected":
+		return processWebhookEvent(webhookData)
+	}
+
+	// For message events, check if chat log is enabled
+	if !userSettings.ChatLogEnabled {
+		log.Printf("Chat log disabled for user %s, skipping message storage", webhookData.UserToken)
+		return nil // Skip processing but don't return error
+	}
+
+	// Process the event normally if chat log is enabled
+	switch webhookData.Event {
+	case "Message":
+		return processMessageEventWithChatRoom(webhookData)
+	case "MessageSent":
+		return processMessageSentEventWithChatRoom(webhookData)
+	case "ReadReceipt":
+		return processReadReceiptEventWithChatRoom(webhookData)
+	default:
+		return processWebhookEvent(webhookData) // Fallback to original processing
+	}
 }
 
 // processWebhookEvent processes different types of webhook events
@@ -1635,6 +1675,40 @@ func SyncSessionStatus(c *gin.Context) {
 			}
 			updatedSessions++
 		}
+
+		// Create or update user settings with default chat log disabled
+		var userSettings models.UserSettings
+		userResult := db.Where("user_token = ?", serverUser.Token).First(&userSettings)
+
+		if userResult.Error != nil {
+			// Create new user settings with chat log disabled by default
+			userSettings = models.UserSettings{
+				UserToken:      serverUser.Token,
+				ChatLogEnabled: false, // Default: disabled when syncing
+				IsActive:       true,
+				DisplayName:    serverUser.Name,
+			}
+			if err := db.Create(&userSettings).Error; err != nil {
+				log.Printf("Error creating user settings for token %s: %v", serverUser.Token, err)
+			} else {
+				log.Printf("Created user settings for token %s (chat log disabled)", serverUser.Token)
+			}
+		} else {
+			// Update existing user settings - reset chat log to disabled when syncing
+			updates := map[string]interface{}{
+				"chat_log_enabled": false, // Reset to disabled on sync
+				"is_active":        true,
+			}
+			if serverUser.Name != "" {
+				updates["display_name"] = serverUser.Name
+			}
+
+			if err := db.Model(&userSettings).Updates(updates).Error; err != nil {
+				log.Printf("Error updating user settings for token %s: %v", serverUser.Token, err)
+			} else {
+				log.Printf("Updated user settings for token %s (chat log reset to disabled)", serverUser.Token)
+			}
+		}
 	}
 
 	log.Printf("Session sync completed: %d created, %d updated", createdSessions, updatedSessions)
@@ -1650,4 +1724,362 @@ func SyncSessionStatus(c *gin.Context) {
 		},
 		"sessions": serverResponse.Data,
 	})
+}
+
+// processMessageEventWithChatRoom processes message events and creates/updates chat room
+func processMessageEventWithChatRoom(webhookData GenfityWebhookData) error {
+	// First process the message normally
+	if err := processMessageEvent(webhookData); err != nil {
+		return err
+	}
+
+	// Then create/update chat room and chat message
+	return createChatRoomAndMessage(webhookData, false) // false = incoming message
+}
+
+// processMessageSentEventWithChatRoom processes sent message events and creates/updates chat room
+func processMessageSentEventWithChatRoom(webhookData GenfityWebhookData) error {
+	// First process the message normally
+	if err := processMessageSentEvent(webhookData); err != nil {
+		return err
+	}
+
+	// Then create/update chat room and chat message
+	return createChatRoomAndMessage(webhookData, true) // true = outgoing message
+}
+
+// processReadReceiptEventWithChatRoom processes read receipt events and updates message status
+func processReadReceiptEventWithChatRoom(webhookData GenfityWebhookData) error {
+	// First process the read receipt normally
+	if err := processReadReceiptEvent(webhookData); err != nil {
+		return err
+	}
+
+	// Then update message status in chat messages
+	return updateChatMessageStatus(webhookData)
+}
+
+// createChatRoomAndMessage creates/updates chat room and adds chat message
+func createChatRoomAndMessage(webhookData GenfityWebhookData, isOutgoing bool) error {
+	data := webhookData.Data
+	db := database.GetDB()
+
+	// Extract message info from the webhook data
+	var messageInfo map[string]interface{}
+	var messageData map[string]interface{}
+
+	if info, ok := data["Info"].(map[string]interface{}); ok {
+		messageInfo = info
+	} else {
+		messageInfo = data
+	}
+
+	if message, ok := data["Message"].(map[string]interface{}); ok {
+		messageData = message
+	} else {
+		messageData = data
+	}
+
+	// Extract basic info
+	messageID, _ := messageInfo["ID"].(string)
+	if messageID == "" {
+		messageID, _ = data["MessageID"].(string)
+		if messageID == "" {
+			messageID, _ = data["id"].(string)
+		}
+	}
+
+	var senderJID, recipientJID, contactJID, contactName string
+	var senderType string
+
+	if isOutgoing {
+		// For outgoing messages, get session owner as sender
+		var session models.WhatsAppSession
+		if err := db.Where("user_token = ?", webhookData.UserToken).First(&session).Error; err == nil {
+			senderJID = session.JID
+		}
+		recipientJID, _ = messageInfo["Chat"].(string)
+		if recipientJID == "" {
+			recipientJID, _ = data["to"].(string)
+		}
+		contactJID = recipientJID
+		senderType = "user"
+	} else {
+		// For incoming messages
+		senderJID, _ = messageInfo["Sender"].(string)
+		if senderJID == "" {
+			senderJID, _ = data["from"].(string)
+		}
+		// Clean sender format - import the function from user.go
+		senderJID = cleanJIDWebhook(senderJID)
+		contactJID = senderJID
+		senderType = "contact"
+
+		// Get contact name
+		contactName, _ = messageInfo["PushName"].(string)
+		if contactName == "" {
+			contactName, _ = data["pushname"].(string)
+		}
+	}
+
+	// Extract message content
+	messageType, _ := messageInfo["Type"].(string)
+	if messageType == "" {
+		messageType, _ = data["type"].(string)
+	}
+
+	var content, caption string
+	var mediaData models.JSONB
+
+	switch messageType {
+	case "text":
+		if conversation, ok := messageData["conversation"].(string); ok {
+			content = conversation
+		} else if extendedText, ok := messageData["extendedTextMessage"].(map[string]interface{}); ok {
+			if text, ok := extendedText["text"].(string); ok {
+				content = text
+			}
+		} else if bodyText, ok := messageData["body"].(string); ok {
+			content = bodyText
+		}
+
+	case "image", "video", "audio", "document", "sticker":
+		if bodyText, ok := messageData["body"].(string); ok {
+			content = bodyText
+		}
+		if captionText, ok := messageData["caption"].(string); ok {
+			caption = captionText
+		}
+		if media, ok := messageData["media"].(map[string]interface{}); ok {
+			mediaData = models.JSONB(media)
+		}
+	}
+
+	// Parse timestamp
+	timestampStr, _ := messageInfo["Timestamp"].(string)
+	if timestampStr == "" {
+		timestampStr, _ = data["timestamp"].(string)
+	}
+
+	messageTimestamp, err := time.Parse(time.RFC3339, timestampStr)
+	if err != nil {
+		if timestampInt, ok := messageInfo["Timestamp"].(float64); ok {
+			messageTimestamp = time.Unix(int64(timestampInt), 0)
+		} else {
+			messageTimestamp = time.Now()
+		}
+	}
+
+	// Check if it's a group message
+	isGroup, _ := messageInfo["IsGroup"].(bool)
+
+	// Determine last sender for chat room
+	var lastSender string
+	if isOutgoing {
+		lastSender = "user"
+	} else {
+		lastSender = "contact"
+	}
+
+	// Create short preview of message for chat room
+	var lastMessage string
+	if content != "" {
+		if len(content) > 100 {
+			lastMessage = content[:100] + "..."
+		} else {
+			lastMessage = content
+		}
+	} else {
+		lastMessage = fmt.Sprintf("[%s]", messageType)
+	}
+
+	// Create or update chat room
+	chatRoom, err := createOrUpdateChatRoomWebhook(db, webhookData.UserToken, contactJID, contactName, lastMessage, lastSender, isGroup)
+	if err != nil {
+		log.Printf("Error creating/updating chat room: %v", err)
+		return err
+	}
+
+	// Create chat message
+	err = createChatMessageWebhook(db, messageID, chatRoom.ChatID, webhookData.UserToken, senderJID, senderType, messageType, content, caption, mediaData, messageTimestamp, "")
+	if err != nil {
+		log.Printf("Error creating chat message: %v", err)
+		return err
+	}
+
+	log.Printf("Created chat message %s in room %s", messageID, chatRoom.ChatID)
+	return nil
+}
+
+// updateChatMessageStatus updates message status in chat messages based on read receipt
+func updateChatMessageStatus(webhookData GenfityWebhookData) error {
+	data := webhookData.Data
+	db := database.GetDB()
+
+	// Extract info from new format structure
+	var eventInfo map[string]interface{}
+
+	if event, ok := data["event"].(map[string]interface{}); ok {
+		eventInfo = event
+	} else {
+		eventInfo = data
+	}
+
+	// Get status from the webhook data
+	status, _ := data["state"].(string)
+	if status == "" {
+		status, _ := eventInfo["Type"].(string)
+		if status == "read" {
+			status = "Read"
+		}
+	}
+
+	// Convert status to lowercase for consistency
+	receiptType := strings.ToLower(status)
+
+	// Extract message IDs
+	var messageIds []interface{}
+	if msgIds, ok := eventInfo["MessageIDs"].([]interface{}); ok {
+		messageIds = msgIds
+	} else if msgIds, ok := data["messageIds"].([]interface{}); ok {
+		messageIds = msgIds
+	}
+
+	// Update message status in chat messages
+	for _, msgId := range messageIds {
+		if messageID, ok := msgId.(string); ok {
+			err := updateMessageStatusWebhook(db, messageID, receiptType)
+			if err != nil {
+				log.Printf("Error updating chat message status: %v", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// Helper functions for webhook processing
+func cleanJIDWebhook(jid string) string {
+	// Remove device suffix (:24, :26) from JID
+	if strings.Contains(jid, ":") {
+		parts := strings.Split(jid, ":")
+		if len(parts) > 0 {
+			jid = parts[0]
+		}
+	}
+
+	// Ensure proper format
+	if !strings.Contains(jid, "@") {
+		jid = jid + "@s.whatsapp.net"
+	}
+
+	return jid
+}
+
+func generateChatIDWebhook(userToken, contactJID string) string {
+	return fmt.Sprintf("%s_%s", userToken, contactJID)
+}
+
+func createOrUpdateChatRoomWebhook(db *gorm.DB, userToken, contactJID, contactName, lastMessage, lastSender string, isGroup bool) (*models.ChatRoom, error) {
+	chatID := generateChatIDWebhook(userToken, contactJID)
+
+	var chatRoom models.ChatRoom
+	result := db.Where("chat_id = ?", chatID).First(&chatRoom)
+
+	if result.Error != nil {
+		// Create new chat room
+		chatRoom = models.ChatRoom{
+			ChatID:       chatID,
+			UserToken:    userToken,
+			ContactJID:   contactJID,
+			ContactName:  contactName,
+			IsGroup:      isGroup,
+			LastMessage:  lastMessage,
+			LastSender:   lastSender,
+			LastActivity: time.Now(),
+			UnreadCount:  0,
+		}
+
+		if isGroup {
+			chatRoom.ChatType = "group"
+			chatRoom.GroupName = contactName
+		} else {
+			chatRoom.ChatType = "individual"
+		}
+
+		return &chatRoom, db.Create(&chatRoom).Error
+	} else {
+		// Update existing chat room
+		updates := map[string]interface{}{
+			"last_message":  lastMessage,
+			"last_sender":   lastSender,
+			"last_activity": time.Now(),
+		}
+
+		if contactName != "" {
+			if isGroup {
+				updates["group_name"] = contactName
+			} else {
+				updates["contact_name"] = contactName
+			}
+		}
+
+		// Increment unread count if message is from contact
+		if lastSender == "contact" {
+			updates["unread_count"] = chatRoom.UnreadCount + 1
+		}
+
+		err := db.Model(&chatRoom).Updates(updates).Error
+		if err != nil {
+			return nil, err
+		}
+
+		// Refresh the model
+		db.Where("chat_id = ?", chatID).First(&chatRoom)
+		return &chatRoom, nil
+	}
+}
+
+func createChatMessageWebhook(db *gorm.DB, messageID, chatID, userToken, senderJID, senderType, messageType, content, caption string, mediaData models.JSONB, messageTimestamp time.Time, quotedMessageID string) error {
+	message := models.ChatMessage{
+		MessageID:        messageID,
+		ChatID:           chatID,
+		UserToken:        userToken,
+		SenderJID:        senderJID,
+		SenderType:       senderType,
+		MessageType:      messageType,
+		Content:          content,
+		Caption:          caption,
+		MediaData:        mediaData,
+		QuotedMessageID:  quotedMessageID,
+		Status:           "sent",
+		MessageTimestamp: messageTimestamp,
+	}
+
+	// Set initial status based on sender type
+	if senderType == "user" {
+		message.Status = "sent"
+	} else {
+		message.Status = "delivered" // Incoming messages are automatically delivered
+	}
+
+	return db.Create(&message).Error
+}
+
+func updateMessageStatusWebhook(db *gorm.DB, messageID, status string) error {
+	now := time.Now()
+	updates := map[string]interface{}{
+		"status": status,
+	}
+
+	switch status {
+	case "delivered":
+		updates["delivered_at"] = &now
+	case "read":
+		updates["read_at"] = &now
+	}
+
+	return db.Model(&models.ChatMessage{}).
+		Where("message_id = ?", messageID).
+		Updates(updates).Error
 }
