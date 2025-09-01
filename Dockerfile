@@ -18,8 +18,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
 # Final stage
 FROM alpine:latest
 
-# Install ca-certificates for HTTPS requests
-RUN apk --no-cache add ca-certificates
+# Install runtime dependencies including wget for health checks
+RUN apk --no-cache add ca-certificates wget curl postgresql-client
 
 WORKDIR /root/
 
@@ -27,7 +27,7 @@ WORKDIR /root/
 COPY --from=builder /app/main .
 
 # Expose port
-EXPOSE 8070
+EXPOSE 8081
 
 # Command to run
 CMD ["./main"]

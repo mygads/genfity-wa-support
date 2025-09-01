@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"genfity-event-api/database"
-	"genfity-event-api/models"
+	"genfity-chat-ai/database"
+	"genfity-chat-ai/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"

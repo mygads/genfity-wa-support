@@ -5,7 +5,7 @@ import (
 	"log"
 	"os"
 
-	"genfity-event-api/models"
+	"genfity-chat-ai/models"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"

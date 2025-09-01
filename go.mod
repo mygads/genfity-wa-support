@@ -1,4 +1,4 @@
-module genfity-event-api
+module genfity-chat-ai
 
 go 1.23
 

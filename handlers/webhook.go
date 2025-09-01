@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"genfity-event-api/database"
-	"genfity-event-api/models"
+	"genfity-chat-ai/database"
+	"genfity-chat-ai/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -1313,7 +1313,7 @@ func HealthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "healthy",
 		"time":    time.Now().Format(time.RFC3339),
-		"service": "genfity-event-api",
+		"service": "genfity-chat-ai",
 	})
 }
 

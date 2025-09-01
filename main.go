@@ -4,8 +4,8 @@ import (
 	"log"
 	"os"
 
-	"genfity-event-api/database"
-	"genfity-event-api/handlers"
+	"genfity-chat-ai/database"
+	"genfity-chat-ai/handlers"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"

@@ -37,7 +37,7 @@ services:
 
   db-check:
     image: postgres:16
-    container_name: eventapi-db-check
+    container_name: chat-ai-db-check
     environment:
       - PGHOST=${DB_HOST}
       - PGPORT=${DB_PORT}
