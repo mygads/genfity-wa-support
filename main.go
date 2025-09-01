@@ -23,11 +23,11 @@ func main() {
 	// Setup Gin router
 	router := gin.Default()
 
-	// Add middleware for CORS if needed
+	// Add CORS middleware
 	router.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, token")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -37,41 +37,38 @@ func main() {
 		c.Next()
 	})
 
-	// Admin routes - requires bearer token authentication
-	admin := router.Group("/admin")
-	admin.Use(handlers.AdminAuthMiddleware())
-	{
-		// User management
-		admin.GET("/users", handlers.AdminGetUsers)
-		admin.GET("/users/:user_token", handlers.AdminGetUser)
-		admin.PUT("/users/:user_token/update", handlers.AdminUpdateUser)
-
-		// Session management
-		admin.GET("/sessions", handlers.AdminGetSessions)
-		admin.GET("/sessions/:user_token", handlers.AdminGetUserSessions)
-
-		// Event monitoring
-		admin.GET("/event", handlers.AdminGetEvents)
-	}
-
-	// User routes - also requires bearer token authentication
-	user := router.Group("/user")
-	user.Use(handlers.AdminAuthMiddleware())
-	{
-		// Chat management
-		user.GET("/chat/:user_token", handlers.GetUserChats)
-		user.GET("/message/:user_token/:chat_id", handlers.GetChatMessages)
-		user.GET("/event/:user_token", handlers.GetUserEvents)
-	}
-
-	// Public routes (no authentication required)
+	// Health check
 	router.GET("/health", handlers.HealthCheck)
-	router.GET("/sessions/sync", handlers.SyncSessionStatus)
 
-	// Webhook routes - for receiving events from various platforms
+	// WhatsApp Gateway routes - All WA API requests go through this gateway with /wa prefix
+	// Admin routes bypass subscription checks, other routes validate subscription
+	wa := router.Group("/wa")
+	{
+		// Admin endpoints (bypass all validation)
+		wa.Any("/admin/*path", handlers.WhatsAppGateway)
+
+		// Session endpoints (validate subscription + session limits)
+		wa.Any("/session/*path", handlers.WhatsAppGateway)
+
+		// Webhook endpoints (validate subscription)
+		wa.Any("/webhook/*path", handlers.WhatsAppGateway)
+
+		// Chat endpoints (validate subscription + message tracking)
+		wa.Any("/chat/*path", handlers.WhatsAppGateway)
+
+		// User endpoints (validate subscription)
+		wa.Any("/user/*path", handlers.WhatsAppGateway)
+
+		// Group endpoints (validate subscription)
+		wa.Any("/group/*path", handlers.WhatsAppGateway)
+
+		// Newsletter endpoints (validate subscription)
+		wa.Any("/newsletter/*path", handlers.WhatsAppGateway)
+	}
+
+	// Original webhook routes for receiving events from WA server (separate from gateway)
 	webhooks := router.Group("/webhook")
 	{
-		// WhatsApp webhook routes
 		wa := webhooks.Group("/wa")
 		{
 			wa.GET("", handlers.VerifyWebhook)
@@ -86,6 +83,7 @@ func main() {
 	}
 
 	log.Printf("Server starting on port %s", port)
+	log.Printf("Gateway mode: %s", os.Getenv("GATEWAY_MODE"))
 	if err := router.Run(":" + port); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}

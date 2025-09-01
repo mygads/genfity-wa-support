@@ -5,17 +5,32 @@ services:
       dockerfile: Dockerfile
     container_name: genfity-chat-ai
     environment:
+      # Primary Database
       - DB_HOST=${DB_HOST}
       - DB_PORT=${DB_PORT}
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
       - DB_NAME=${DB_NAME}
       - DB_SSLMODE=${DB_SSLMODE}
+      # Transactional Database
+      - TRANSACTIONAL_DB_HOST=${TRANSACTIONAL_DB_HOST}
+      - TRANSACTIONAL_DB_PORT=${TRANSACTIONAL_DB_PORT}
+      - TRANSACTIONAL_DB_USER=${TRANSACTIONAL_DB_USER}
+      - TRANSACTIONAL_DB_PASSWORD=${TRANSACTIONAL_DB_PASSWORD}
+      - TRANSACTIONAL_DB_NAME=${TRANSACTIONAL_DB_NAME}
+      - TRANSACTIONAL_DB_SSLMODE=${TRANSACTIONAL_DB_SSLMODE}
+      # Server Configuration
       - PORT=${PORT}
       - TZ=${TZ}
       - GIN_MODE=${GIN_MODE}
+      # Gateway Configuration
+      - GATEWAY_MODE=${GATEWAY_MODE}
+      - RATE_LIMIT_WINDOW=${RATE_LIMIT_WINDOW}
+      - DEFAULT_RATE_LIMIT=${DEFAULT_RATE_LIMIT}
+      # API Configuration
       - WEBHOOK_VERIFY_TOKEN=${WEBHOOK_VERIFY_TOKEN}
       - ADMIN_TOKEN=${ADMIN_TOKEN}
+      # WA Server Configuration
       - WA_SERVER_URL=${WA_SERVER_URL}
       - WA_ADMIN_TOKEN=${WA_ADMIN_TOKEN}
       - LOG_LEVEL=${LOG_LEVEL}
@@ -25,6 +40,7 @@ services:
       - genfity-network
     depends_on:
       - db-check
+      - transactional-db-check
     restart: unless-stopped
     healthcheck:
       # Use curl -f to perform a GET and return non-zero on non-2xx responses.
@@ -66,6 +82,38 @@ services:
         
         echo 'Running migrations if needed...'
         echo 'Database check completed successfully'
+      "
+
+  transactional-db-check:
+    image: postgres:16
+    container_name: transactional-db-check
+    environment:
+      - PGHOST=${TRANSACTIONAL_DB_HOST}
+      - PGPORT=${TRANSACTIONAL_DB_PORT}
+      - PGUSER=${TRANSACTIONAL_DB_USER}
+      - PGPASSWORD=${TRANSACTIONAL_DB_PASSWORD}
+      - PGDATABASE=${TRANSACTIONAL_DB_NAME}
+    networks:
+      - genfity-network
+    command: >
+      sh -c "
+        echo 'Checking transactional database connection...'
+        until pg_isready -h ${TRANSACTIONAL_DB_HOST} -p ${TRANSACTIONAL_DB_PORT} -U ${TRANSACTIONAL_DB_USER} -d postgres; do
+          echo 'Waiting for Transactional PostgreSQL server...'
+          sleep 2
+        done
+        echo 'Transactional PostgreSQL server is ready!'
+        
+        echo 'Checking if transactional database exists...'
+        if psql -h ${TRANSACTIONAL_DB_HOST} -U ${TRANSACTIONAL_DB_USER} -d postgres -lqt | cut -d \\| -f 1 | grep -qw ${TRANSACTIONAL_DB_NAME}; then
+          echo 'Database ${TRANSACTIONAL_DB_NAME} exists'
+        else
+          echo 'Database ${TRANSACTIONAL_DB_NAME} does not exist, creating...'
+          psql -h ${TRANSACTIONAL_DB_HOST} -U ${TRANSACTIONAL_DB_USER} -d postgres -c 'CREATE DATABASE ${TRANSACTIONAL_DB_NAME};'
+          echo 'Database ${TRANSACTIONAL_DB_NAME} created'
+        fi
+        
+        echo 'Transactional database check completed successfully'
       "
 
 networks:
