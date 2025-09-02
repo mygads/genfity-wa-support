@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -17,6 +20,13 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
+
+// SendImageRequest represents the request body for sending images
+type SendImageRequest struct {
+	Phone   string `json:"Phone"`
+	Image   string `json:"Image"`
+	Caption string `json:"Caption"`
+}
 
 // Global endpoints that don't require token validation
 var globalEndpoints = []string{
@@ -32,6 +42,119 @@ func isGlobalEndpoint(path string) bool {
 		}
 	}
 	return false
+}
+
+// isDataURI checks if a string is a data URI (base64 encoded)
+func isDataURI(s string) bool {
+	return strings.HasPrefix(s, "data:")
+}
+
+// isValidURL checks if a string is a valid URL
+func isValidURL(s string) bool {
+	_, err := url.ParseRequestURI(s)
+	return err == nil && (strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://"))
+}
+
+// getMimeTypeFromBytes detects MIME type from image bytes
+func getMimeTypeFromBytes(data []byte) string {
+	if len(data) < 8 {
+		return "application/octet-stream"
+	}
+
+	// Check PNG signature
+	if bytes.HasPrefix(data, []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}) {
+		return "image/png"
+	}
+
+	// Check JPEG signature
+	if bytes.HasPrefix(data, []byte{0xFF, 0xD8, 0xFF}) {
+		return "image/jpeg"
+	}
+
+	// Check GIF signature
+	if bytes.HasPrefix(data, []byte("GIF87a")) || bytes.HasPrefix(data, []byte("GIF89a")) {
+		return "image/gif"
+	}
+
+	// Check WebP signature
+	if len(data) >= 12 && bytes.Equal(data[0:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")) {
+		return "image/webp"
+	}
+
+	// Default fallback
+	return "image/jpeg"
+}
+
+// downloadAndEncodeImage downloads image from URL and converts to base64 data URI
+func downloadAndEncodeImage(imageURL string) (string, error) {
+	log.Printf("DEBUG: Downloading image from URL: %s", imageURL)
+
+	// Create HTTP client with timeout
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	resp, err := client.Get(imageURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to download image: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to download image: HTTP %d", resp.StatusCode)
+	}
+
+	// Read image data
+	imageData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read image data: %v", err)
+	}
+
+	// Detect MIME type
+	mimeType := getMimeTypeFromBytes(imageData)
+	log.Printf("DEBUG: Detected MIME type: %s", mimeType)
+
+	// Encode to base64
+	base64Data := base64.StdEncoding.EncodeToString(imageData)
+
+	// Create data URI
+	dataURI := fmt.Sprintf("data:%s;base64,%s", mimeType, base64Data)
+
+	log.Printf("DEBUG: Successfully converted image to data URI (length: %d)", len(dataURI))
+
+	return dataURI, nil
+}
+
+// processImageRequest processes request body for /chat/send/image endpoint
+func processImageRequest(bodyBytes []byte) ([]byte, error) {
+	var request SendImageRequest
+	if err := json.Unmarshal(bodyBytes, &request); err != nil {
+		return bodyBytes, nil // If can't parse, return original
+	}
+
+	// Check if Image field is a URL that needs to be converted
+	if request.Image != "" && !isDataURI(request.Image) && isValidURL(request.Image) {
+		log.Printf("DEBUG: Converting URL to base64: %s", request.Image)
+
+		dataURI, err := downloadAndEncodeImage(request.Image)
+		if err != nil {
+			log.Printf("ERROR: Failed to convert image URL: %v", err)
+			return nil, err
+		}
+
+		// Update the Image field with the data URI
+		request.Image = dataURI
+
+		// Re-encode to JSON
+		modifiedBytes, err := json.Marshal(request)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal modified request: %v", err)
+		}
+
+		log.Printf("DEBUG: Successfully modified request body")
+		return modifiedBytes, nil
+	}
+
+	// Return original if no conversion needed
+	return bodyBytes, nil
 }
 
 // WhatsAppGateway handles all WhatsApp API requests with /wa prefix
@@ -94,8 +217,8 @@ func WhatsAppGateway(c *gin.Context) {
 		}
 	}
 
-	// Proxy to WhatsApp server
-	statusCode := proxyToWAServer(c, actualPath)
+	// Proxy to WhatsApp server with special handling for image endpoints
+	statusCode := proxyToWAServerWithProcessing(c, actualPath)
 
 	// Track successful message sends
 	if isMessageEndpoint(actualPath) && method == "POST" && statusCode >= 200 && statusCode < 300 {
@@ -193,6 +316,119 @@ func checkSessionLimits(userID string) error {
 	}
 
 	return nil
+}
+
+// proxyToWAServerWithProcessing forwards the request to WhatsApp server with optional body processing
+func proxyToWAServerWithProcessing(c *gin.Context, targetPath string) int {
+	// Check if this is an image endpoint that needs special processing
+	if targetPath == "/chat/send/image" && c.Request.Method == "POST" {
+		return proxyImageRequest(c, targetPath)
+	}
+
+	// For all other endpoints, use normal proxy
+	return proxyToWAServer(c, targetPath)
+}
+
+// proxyImageRequest handles image endpoint with URL to base64 conversion
+func proxyImageRequest(c *gin.Context, targetPath string) int {
+	waServerURL := os.Getenv("WA_SERVER_URL")
+	if waServerURL == "" {
+		c.JSON(http.StatusInternalServerError, models.GatewayResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "WhatsApp server URL not configured",
+		})
+		return http.StatusInternalServerError
+	}
+
+	// Read request body
+	var bodyBytes []byte
+	if c.Request.Body != nil {
+		var err error
+		bodyBytes, err = io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, models.GatewayResponse{
+				Status:  http.StatusInternalServerError,
+				Message: "Failed to read request body",
+			})
+			return http.StatusInternalServerError
+		}
+		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+	}
+
+	// Process image request (convert URL to base64 if needed)
+	processedBody, err := processImageRequest(bodyBytes)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.GatewayResponse{
+			Status:  http.StatusBadRequest,
+			Message: fmt.Sprintf("Failed to process image: %v", err),
+		})
+		return http.StatusBadRequest
+	}
+
+	// Create new request to WA server
+	targetURL := waServerURL + targetPath
+	if c.Request.URL.RawQuery != "" {
+		targetURL += "?" + c.Request.URL.RawQuery
+	}
+
+	log.Printf("DEBUG: Proxying image request to URL: %s", targetURL)
+	log.Printf("DEBUG: Request method: %s", c.Request.Method)
+	log.Printf("DEBUG: Original body length: %d, Processed body length: %d", len(bodyBytes), len(processedBody))
+
+	req, err := http.NewRequest(c.Request.Method, targetURL, bytes.NewBuffer(processedBody))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.GatewayResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "Failed to create request",
+		})
+		return http.StatusInternalServerError
+	}
+
+	// Copy all headers exactly as received
+	for name, values := range c.Request.Header {
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
+	}
+
+	// Update Content-Length if body was modified
+	if len(processedBody) != len(bodyBytes) {
+		req.Header.Set("Content-Length", fmt.Sprintf("%d", len(processedBody)))
+	}
+
+	// Execute request to WA server
+	client := &http.Client{Timeout: 60 * time.Second} // Longer timeout for image processing
+	resp, err := client.Do(req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, models.GatewayResponse{
+			Status:  http.StatusBadGateway,
+			Message: "Failed to reach WhatsApp server",
+		})
+		return http.StatusBadGateway
+	}
+	defer resp.Body.Close()
+
+	// Read response from WA server
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.GatewayResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "Failed to read response",
+		})
+		return http.StatusInternalServerError
+	}
+
+	// Copy response headers exactly
+	for name, values := range resp.Header {
+		for _, value := range values {
+			c.Header(name, value)
+		}
+	}
+
+	// Return response with same status code and body as WA server
+	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), responseBody)
+
+	return resp.StatusCode
 }
 
 // proxyToWAServer forwards the request to WhatsApp server without modification
