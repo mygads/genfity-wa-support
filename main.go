@@ -83,6 +83,13 @@ func main() {
 		}
 	}
 
+	// Bulk contact endpoints
+	bulk := router.Group("/bulk")
+	{
+		bulk.POST("/contact/sync", handlers.BulkContactSync)
+		bulk.GET("/contact", handlers.BulkContactList)
+	}
+
 	// Get port from environment or default to 8070
 	port := os.Getenv("PORT")
 	if port == "" {

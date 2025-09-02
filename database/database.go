@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 var DB *gorm.DB
@@ -36,7 +37,9 @@ func initPrimaryDatabase() {
 		host, port, user, password, dbname, sslmode)
 
 	var err error
-	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	DB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent), // No logging for cleaner output
+	})
 	if err != nil {
 		log.Fatal("Failed to connect to primary database:", err)
 	}
@@ -77,12 +80,24 @@ func initTransactionalDatabase() {
 		host, port, user, password, dbname, sslmode)
 
 	var err error
-	TransactionalDB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	TransactionalDB, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent), // No logging for cleaner output
+	})
 	if err != nil {
 		log.Fatal("Failed to connect to transactional database:", err)
 	}
 
 	log.Println("Transactional database connected successfully")
+
+	// Auto migrate contact tables in transactional database
+	err = TransactionalDB.AutoMigrate(
+		&models.WhatsAppContact{},
+	)
+	if err != nil {
+		log.Printf("Warning: Failed to migrate contact tables in transactional database: %v", err)
+	} else {
+		log.Println("Contact tables migration completed in transactional database")
+	}
 
 	// Check if required tables exist (read-only gateway)
 	checkRequiredTables()
