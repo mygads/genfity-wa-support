@@ -18,20 +18,43 @@ import (
 	"gorm.io/gorm"
 )
 
+// Global endpoints that don't require token validation
+var globalEndpoints = []string{
+	"/webhook/events", // WhatsApp calls this endpoint
+	"/health",
+}
+
+// isGlobalEndpoint checks if the given path is a global endpoint
+func isGlobalEndpoint(path string) bool {
+	for _, endpoint := range globalEndpoints {
+		if path == endpoint || strings.HasPrefix(path, endpoint+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // WhatsAppGateway handles all WhatsApp API requests with /wa prefix
 func WhatsAppGateway(c *gin.Context) {
 	path := c.Request.URL.Path
 	method := c.Request.Method
 
-	// log.Printf("DEBUG: Gateway received request - Method: %s, Path: %s", method, path)
+	log.Printf("DEBUG: Gateway received request - Method: %s, Path: %s", method, path)
 
 	// Remove /wa prefix to get actual WA server path
 	actualPath := strings.TrimPrefix(path, "/wa")
-	// log.Printf("DEBUG: Actual path after prefix removal: %s", actualPath)
+	log.Printf("DEBUG: Actual path after prefix removal: %s", actualPath)
 
 	// Admin routes bypass all validation
 	if strings.HasPrefix(actualPath, "/admin") {
 		// log.Printf("DEBUG: Admin route detected, bypassing validation")
+		proxyToWAServer(c, actualPath)
+		return
+	}
+
+	// Global endpoints that don't require token validation
+	if isGlobalEndpoint(actualPath) {
+		log.Printf("DEBUG: Global endpoint detected, bypassing token validation")
 		proxyToWAServer(c, actualPath)
 		return
 	}
@@ -195,6 +218,10 @@ func proxyToWAServer(c *gin.Context, targetPath string) int {
 	if c.Request.URL.RawQuery != "" {
 		targetURL += "?" + c.Request.URL.RawQuery
 	}
+
+	log.Printf("DEBUG: Proxying to URL: %s", targetURL)
+	log.Printf("DEBUG: Request method: %s", c.Request.Method)
+	log.Printf("DEBUG: Request body: %s", string(bodyBytes))
 
 	req, err := http.NewRequest(c.Request.Method, targetURL, bytes.NewBuffer(bodyBytes))
 	if err != nil {

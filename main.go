@@ -45,25 +45,32 @@ func main() {
 	wa := router.Group("/wa")
 	{
 		// Admin endpoints (bypass all validation)
-		wa.Any("/admin/*path", handlers.WhatsAppGateway)
+		wa.Any("/admin", handlers.WhatsAppGateway)       // Handle exact /wa/admin
+		wa.Any("/admin/*path", handlers.WhatsAppGateway) // Handle /wa/admin/...
 
 		// Session endpoints (validate subscription + session limits)
-		wa.Any("/session/*path", handlers.WhatsAppGateway)
+		wa.Any("/session", handlers.WhatsAppGateway)       // Handle exact /wa/session
+		wa.Any("/session/*path", handlers.WhatsAppGateway) // Handle /wa/session/...
 
 		// Webhook endpoints (validate subscription)
-		wa.Any("/webhook/*path", handlers.WhatsAppGateway)
+		wa.Any("/webhook", handlers.WhatsAppGateway)       // Handle exact /wa/webhook
+		wa.Any("/webhook/*path", handlers.WhatsAppGateway) // Handle /wa/webhook/...
 
 		// Chat endpoints (validate subscription + message tracking)
-		wa.Any("/chat/*path", handlers.WhatsAppGateway)
+		wa.Any("/chat", handlers.WhatsAppGateway)       // Handle exact /wa/chat
+		wa.Any("/chat/*path", handlers.WhatsAppGateway) // Handle /wa/chat/...
 
 		// User endpoints (validate subscription)
-		wa.Any("/user/*path", handlers.WhatsAppGateway)
+		wa.Any("/user", handlers.WhatsAppGateway)       // Handle exact /wa/user
+		wa.Any("/user/*path", handlers.WhatsAppGateway) // Handle /wa/user/...
 
 		// Group endpoints (validate subscription)
-		wa.Any("/group/*path", handlers.WhatsAppGateway)
+		wa.Any("/group", handlers.WhatsAppGateway)       // Handle exact /wa/group
+		wa.Any("/group/*path", handlers.WhatsAppGateway) // Handle /wa/group/...
 
 		// Newsletter endpoints (validate subscription)
-		wa.Any("/newsletter/*path", handlers.WhatsAppGateway)
+		wa.Any("/newsletter", handlers.WhatsAppGateway)       // Handle exact /wa/newsletter
+		wa.Any("/newsletter/*path", handlers.WhatsAppGateway) // Handle /wa/newsletter/...
 	}
 
 	// Original webhook routes for receiving events from WA server (separate from gateway)
