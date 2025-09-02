@@ -88,6 +88,15 @@ func main() {
 	{
 		bulk.POST("/contact/sync", handlers.BulkContactSync)
 		bulk.GET("/contact", handlers.BulkContactList)
+
+		// Bulk message endpoints
+		bulk.POST("/create/text", handlers.BulkCreateText)
+		bulk.POST("/create/image", handlers.BulkCreateImage)
+		bulk.GET("/message", handlers.BulkMessageList)
+		bulk.GET("/message/:id", handlers.BulkMessageDetail)
+
+		// Cron job endpoint
+		bulk.GET("/cron/process", handlers.BulkMessageCronJob)
 	}
 
 	// Get port from environment or default to 8070

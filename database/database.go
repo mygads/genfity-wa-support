@@ -92,6 +92,8 @@ func initTransactionalDatabase() {
 	// Auto migrate contact tables in transactional database
 	err = TransactionalDB.AutoMigrate(
 		&models.WhatsAppContact{},
+		&models.BulkMessage{},
+		&models.BulkMessageItem{},
 	)
 	if err != nil {
 		log.Printf("Warning: Failed to migrate contact tables in transactional database: %v", err)
