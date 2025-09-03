@@ -1,12 +1,13 @@
 # Genfity Chat AI - WhatsApp Event API & Gateway
 
-A comprehensive WhatsApp API gateway and event processing system with subscription validation, image processing, contact management, and bulk messaging capabilities.
+A comprehensive WhatsApp API gateway and event processing system with JWT authentication, subscription validation, image processing, contact management, and campaign-based bulk messaging capabilities.
 
 ## Features
 
 ### Core Gateway Features
 - ✅ **API Gateway** - Proxy requests to WhatsApp server with validation
 - ✅ **Subscription Validation** - Check user subscription status  
+- ✅ **JWT Authentication** - Bearer token authentication for user ownership
 - ✅ **Session Management** - Validate and track WhatsApp sessions
 - ✅ **Message Tracking** - Track message quotas and limits
 - ✅ **Image Processing** - URL to base64 conversion for images
@@ -15,14 +16,17 @@ A comprehensive WhatsApp API gateway and event processing system with subscripti
 ### Contact Management
 - ✅ **Contact Sync** - Sync contacts from WhatsApp server
 - ✅ **Contact List** - Get simplified contact list
-- ✅ **Database Storage** - Store contacts with session linkage
+- ✅ **Database Storage** - Store contacts with user ownership
+- ✅ **Manual Contact Addition** - Add contacts manually
 
-### Bulk Messaging System
-- ✅ **Bulk Text Messages** - Send text messages to multiple recipients
-- ✅ **Bulk Image Messages** - Send images (URL/base64) to multiple recipients  
-- ✅ **Message Scheduling** - Schedule messages for future delivery
+### Campaign-Based Messaging System
+- ✅ **Campaign Templates** - Create reusable message templates owned by users
+- ✅ **Bulk Campaign Execution** - Execute campaigns to multiple recipients
+- ✅ **Message Scheduling** - Schedule campaigns for future delivery
 - ✅ **Status Tracking** - Track individual message delivery status
-- ✅ **Cron Job Support** - Process scheduled messages automatically
+- ✅ **Template Management** - CRUD operations for campaign templates
+- ✅ **User Ownership** - Each user can only access their own campaigns
+- ✅ **Cron Job Support** - Process scheduled campaigns automatically
 
 ### Event Processing
 - ✅ **Webhook Handling** - Receive and process WhatsApp events
@@ -30,32 +34,17 @@ A comprehensive WhatsApp API gateway and event processing system with subscripti
 - ✅ **Real-time Processing** - Process events in real-time
 - ✅ **Event Types** - Support for messages, receipts, presence, etc.
 
-## API Documentation
+## 📖 Complete Documentation
 
-### Gateway Endpoints
-- **All WA Routes**: `/wa/*` - Proxied to WhatsApp server with validation
-- **Health Check**: `GET /health` - Server status
+### Main Documentation
+- **[Campaign API Documentation](./CAMPAIGN_API_DOCUMENTATION.md)** - Complete API reference with examples
+- **[Quick Start Guide](./QUICK_START_GUIDE.md)** - Step-by-step usage guide
+- **[Usage Examples](./USAGE_EXAMPLES.md)** - JavaScript/Python code examples
 
-### Contact Management
-- **Sync Contacts**: `POST /bulk/contact/sync` - Sync from WhatsApp server
-- **List Contacts**: `GET /bulk/contact` - Get simplified contact list
-
-📖 **[Complete Contact API Documentation](./CONTACT_SYNC_API.md)**
-
-### Bulk Messaging
-- **Create Text Bulk**: `POST /bulk/create/text` - Create bulk text campaign
-- **Create Image Bulk**: `POST /bulk/create/image` - Create bulk image campaign
-- **List Campaigns**: `GET /bulk/message` - Get all bulk campaigns
-- **Campaign Detail**: `GET /bulk/message/{id}` - Get campaign details
-- **Cron Process**: `GET /bulk/cron/process` - Process scheduled messages
-
-📖 **[Complete Bulk Message API Documentation](./BULK_MESSAGE_API.md)**
-
-### Webhook Events
-- **Verify Webhook**: `GET /webhook/wa` - WhatsApp webhook verification
-- **Handle Events**: `POST /webhook/wa` - Process incoming WhatsApp events
-
-📖 **[Webhook Documentation](./WEBHOOK_DOCUMENTATION.md)**
+### Additional Documentation
+- **[Contact Sync API](./CONTACT_SYNC_API.md)** - Contact management endpoints
+- **[Webhook Documentation](./WEBHOOK_DOCUMENTATION.md)** - Webhook handling
+- **[Testing Guide](./API_TESTING_GUIDE.md)** - API testing examples
 
 ## Quick Start
 
@@ -80,6 +69,9 @@ TRANSACTIONAL_DB_SSLMODE=disable
 # WhatsApp Server
 WHATSAPP_SERVER_URL=https://wa.genfity.com
 
+# JWT Configuration
+JWT_SECRET=your-secret-key-here
+
 # Gateway Configuration
 GATEWAY_MODE=production
 PORT=8070
@@ -90,102 +82,205 @@ PORT=8070
 go run main.go
 ```
 
-### 3. Test Contact Sync
+### 3. Complete Workflow Example
+
+#### Authentication
+All requests require JWT Bearer token:
 ```bash
-curl -X POST http://localhost:8070/bulk/contact/sync \
-  -H "token: your_session_token"
+Authorization: Bearer <your-jwt-token>
 ```
 
-### 4. Create Bulk Message
+#### Step 1: Sync Contacts
 ```bash
-curl -X POST http://localhost:8070/bulk/create/text \
+curl -X POST http://localhost:8070/bulk/contact/sync \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "token: YOUR_WHATSAPP_SESSION_TOKEN"
+```
+
+**Note:** Contact sync requires both JWT Bearer token (for user authentication) and WhatsApp session token (for accessing WhatsApp server).
+
+#### Step 2: Create Campaign Template
+```bash
+curl -X POST http://localhost:8070/bulk/campaign \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
-  -H "token: your_session_token" \
   -d '{
-    "Phone": ["6281234567890"],
-    "Body": "Hello from bulk messaging!",
-    "SendSync": "now"
+    "name": "Welcome Message",
+    "type": "text", 
+    "message_body": "Selamat datang di layanan kami!"
   }'
+```
+
+#### Step 3: Execute Bulk Campaign
+```bash
+curl -X POST http://localhost:8070/bulk/campaign/execute \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "campaign_id": 1,
+    "name": "Welcome Campaign Batch 1",
+    "phone": ["628123456789", "628987654321"],
+    "send_sync": "now"
+  }'
+```
+
+#### Step 4: Monitor Campaign Progress
+```bash
+curl -X GET http://localhost:8070/bulk/campaigns/1 \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+## API Endpoints Overview
+
+### Authentication Required (Bearer Token)
+All `/bulk/*` endpoints require JWT authentication.
+
+### Contact Management
+```
+POST /bulk/contact/sync         - Sync contacts from WhatsApp server
+GET  /bulk/contact              - Get user's contacts
+POST /bulk/contact/add          - Add contacts manually
+```
+
+### Campaign Templates
+```
+POST   /bulk/campaign           - Create campaign template
+GET    /bulk/campaign           - Get user's campaigns
+GET    /bulk/campaign/{id}      - Get specific campaign
+PUT    /bulk/campaign/{id}      - Update campaign
+DELETE /bulk/campaign/{id}      - Delete campaign
+```
+
+### Bulk Campaign Execution
+```
+POST /bulk/campaign/execute     - Execute bulk campaign
+GET  /bulk/campaigns            - Get user's bulk campaigns
+GET  /bulk/campaigns/{id}       - Get bulk campaign details
+GET  /bulk/cron/process         - Process scheduled campaigns
+```
+
+### Gateway Routes (Token Header)
+```
+/wa/admin/*     - Admin routes (no validation)
+/wa/session/*   - Session management
+/wa/webhook/*   - Webhook endpoints
+/wa/chat/*      - Chat operations
+/wa/user/*      - User operations
+/wa/group/*     - Group operations
+/wa/newsletter/* - Newsletter operations
 ```
 
 ## Database Schema
 
-### Primary Database (chat-ai_db)
+### User & Session Management
+- `User` - User accounts with JWT authentication
+- `UserSession` - JWT session management
+- `WhatsAppSession` - WhatsApp session mapping
+
+### Contact Management
+- `WhatsAppContact` - User-owned contact database
+
+### Campaign System
+- `Campaign` - User-owned campaign templates
+- `BulkCampaign` - Campaign execution records
+- `BulkCampaignItem` - Individual message tracking
+
+### Event Processing
 - `gen_event_webhooks` - All webhook events
 - `whats_app_messages` - Processed messages
-- `whats_app_sessions` - Local session tracking
-- `user_settings` - User preferences
 - `chat_rooms` - Chat conversations
 - `chat_messages` - Individual messages
 
-### Transactional Database
-- `WhatsAppSession` - Session management
-- `WhatsappApiPackage` - Package configuration  
-- `ServicesWhatsappCustomers` - Subscription data
-- `WhatsAppMessageStats` - Message statistics
-- `whats_app_sync_contacts` - Synced contacts
-- `bulk_messages` - Bulk message campaigns
-- `bulk_message_items` - Individual message items
+## Campaign Workflow
 
-## Gateway Routing
+1. **User Authentication** - JWT Bearer token validation
+2. **Contact Sync** - Sync contacts from WhatsApp server to user's database
+3. **Template Creation** - Create reusable campaign templates
+4. **Campaign Execution** - Execute templates to selected contacts
+5. **Scheduling Support** - Immediate or scheduled delivery
+6. **Progress Monitoring** - Track delivery status per recipient
+7. **User Ownership** - Each user manages their own campaigns and contacts
 
-### Admin Routes (No Validation)
-```
-/wa/admin/*     → {baseUrl}/admin/*
-```
+## Send Sync Formats
 
-### Validated Routes
-```
-/wa/session/*   → {baseUrl}/session/*   (+ session limits)
-/wa/webhook/*   → {baseUrl}/webhook/*   (+ subscription)
-/wa/chat/*      → {baseUrl}/chat/*      (+ message tracking)
-/wa/user/*      → {baseUrl}/user/*      (+ subscription)
-/wa/group/*     → {baseUrl}/group/*     (+ subscription)
-/wa/newsletter/* → {baseUrl}/newsletter/* (+ subscription)
-```
+| Format | Example | Description |
+|--------|---------|-------------|
+| Immediate | `"now"` | Send immediately |
+| DateTime | `"2025-09-04 09:00:00"` | Specific date and time |
+| Date Only | `"2025-09-04"` | Date only (9 AM default) |
+| Time Only | `"09:00"` | Time only (today/tomorrow) |
 
-### Special Processing
-- **Image Endpoints**: Automatic URL → base64 conversion
-- **Token Validation**: All routes validate session token
-- **Subscription Check**: Non-admin routes check subscription status
-- **Message Tracking**: Chat routes track message quotas
+## Status Tracking
 
-## Bulk Messaging Workflow
+### Campaign Template Status
+- `active` - Template ready for use
+- `inactive` - Template disabled
+- `archived` - Template archived
 
-1. **Create Campaign** - User creates text/image bulk campaign
-2. **Schedule Processing** - Immediate or scheduled for later
-3. **Contact Validation** - Validate phone numbers
-4. **Queue Processing** - Process messages in background
-5. **Status Updates** - Track individual delivery status
-6. **Cron Jobs** - Process scheduled campaigns every minute
+### Bulk Campaign Status
+- `pending` - Queued for immediate execution
+- `scheduled` - Scheduled for future execution
+- `processing` - Currently being processed
+- `completed` - Successfully completed
+- `failed` - Execution failed
 
-## Contact Sync Workflow
-
-1. **Trigger Sync** - User calls sync endpoint
-2. **External Request** - Fetch from WhatsApp server
-3. **Data Processing** - Clean and validate contact data
-4. **Database Storage** - Store with session linkage
-5. **Response** - Return synced contact data
+### Individual Message Status
+- `pending` - Waiting to be sent
+- `sent` - Successfully sent
+- `failed` - Failed to send
 
 ## Error Handling
 
-- **401 Unauthorized** - Invalid or missing token
-- **403 Forbidden** - Subscription expired or limit exceeded
+### HTTP Status Codes
+- **200 OK** - Successful operation
+- **201 Created** - Resource created successfully
 - **400 Bad Request** - Invalid request format
-- **500 Internal Error** - Server or database errors
+- **401 Unauthorized** - Invalid or missing JWT token
+- **403 Forbidden** - Subscription expired or limit exceeded
+- **404 Not Found** - Resource not found
+- **500 Internal Server Error** - Server error
 
-## Logging
+### Error Response Format
+```json
+{
+  "code": 400,
+  "success": false,
+  "message": "Error description"
+}
+```
 
-- **GORM Silent Mode** - Clean logs without query noise
-- **Error Tracking** - Comprehensive error logging
+## Security Features
+
+- **JWT Authentication** - Secure user authentication
+- **User Isolation** - Users can only access their own data
+- **Token Validation** - Comprehensive JWT token validation
+- **Session Management** - Secure session tracking
+- **Input Validation** - Request validation and sanitization
+
+## Performance Features
+
+- **Silent GORM Logging** - Clean logs without query noise
+- **Background Processing** - Async campaign execution
+- **Batch Processing** - Efficient bulk operations
+- **Database Indexing** - Optimized database queries
+- **Connection Pooling** - Efficient database connections
+
+## Monitoring & Observability
+
+- **Campaign Progress Tracking** - Real-time progress monitoring
+- **Individual Message Status** - Per-recipient delivery tracking
+- **Error Logging** - Comprehensive error tracking
 - **Performance Metrics** - Request timing and success rates
+- **Health Check Endpoint** - Server status monitoring
 
 ## Contributing
 
-1. Follow Go best practices
-2. Add tests for new features
-3. Update documentation
-4. Ensure proper error handling
+1. Follow Go best practices and conventions
+2. Add comprehensive tests for new features
+3. Update documentation for any API changes
+4. Ensure proper error handling and logging
+5. Maintain JWT authentication patterns
+6. Follow user ownership principles
 
 ## License
 

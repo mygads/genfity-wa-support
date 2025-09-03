@@ -6,6 +6,7 @@ import (
 
 	"genfity-chat-ai/database"
 	"genfity-chat-ai/handlers"
+	"genfity-chat-ai/middleware"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -27,7 +28,7 @@ func main() {
 	router.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, token")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, token") // Added token header for WhatsApp session
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -83,19 +84,31 @@ func main() {
 		}
 	}
 
-	// Bulk contact endpoints
+	// Bulk contact and campaign endpoints
 	bulk := router.Group("/bulk")
+	bulk.Use(middleware.JWTMiddleware()) // Use JWT authentication instead of session
 	{
+		// Contact management
 		bulk.POST("/contact/sync", handlers.BulkContactSync)
 		bulk.GET("/contact", handlers.BulkContactList)
+		bulk.POST("/contact/add", handlers.AddContacts)
 
-		// Bulk message endpoints
-		bulk.POST("/create/text", handlers.BulkCreateText)
-		bulk.POST("/create/image", handlers.BulkCreateImage)
-		bulk.GET("/message", handlers.BulkMessageList)
-		bulk.GET("/message/:id", handlers.BulkMessageDetail)
+		// Campaign management endpoints
+		campaign := bulk.Group("/campaign")
+		{
+			campaign.POST("", handlers.CreateCampaign)
+			campaign.GET("", handlers.GetCampaigns)
+			campaign.GET("/:id", handlers.GetCampaign)
+			campaign.PUT("/:id", handlers.UpdateCampaign)
+			campaign.DELETE("/:id", handlers.DeleteCampaign)
+		}
 
-		// Cron job endpoint
+		// Bulk campaign execution endpoints
+		bulk.POST("/campaign/execute", handlers.CreateBulkCampaign)
+		bulk.GET("/campaigns", handlers.GetBulkCampaigns)
+		bulk.GET("/campaigns/:id", handlers.GetBulkCampaign)
+
+		// Cron job endpoint for processing scheduled campaigns
 		bulk.GET("/cron/process", handlers.BulkMessageCronJob)
 	}
 

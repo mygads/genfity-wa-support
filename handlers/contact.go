@@ -16,26 +16,42 @@ import (
 	"gorm.io/gorm"
 )
 
+// extractPhoneNumber extracts clean phone number from WhatsApp format
+func extractPhoneNumber(phoneNumber string) string {
+	// Remove @s.whatsapp.net suffix
+	if strings.HasSuffix(phoneNumber, "@s.whatsapp.net") {
+		return strings.TrimSuffix(phoneNumber, "@s.whatsapp.net")
+	}
+
+	// Skip @lid format (channel/business accounts) as they're not regular phone numbers
+	if strings.HasSuffix(phoneNumber, "@lid") {
+		return ""
+	}
+
+	// Return as is if no suffix found
+	return phoneNumber
+}
+
 // BulkContactSync syncs contacts from external WhatsApp server and stores them in database
 func BulkContactSync(c *gin.Context) {
-	// Get token from header
-	token := c.GetHeader("token")
-	if token == "" {
+	// Get user ID from JWT context
+	userID, exists := c.Get("user_id")
+	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"code":    401,
 			"success": false,
-			"message": "Token is required",
+			"message": "User ID not found",
 		})
 		return
 	}
 
-	// Validate token exists in transactional database
-	var session models.WhatsappSession
-	if err := database.GetTransactionalDB().Where("token = ?", token).First(&session).Error; err != nil {
+	// Get WhatsApp session token from header
+	whatsappToken := c.GetHeader("token")
+	if whatsappToken == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"code":    401,
 			"success": false,
-			"message": "Invalid token",
+			"message": "WhatsApp session token is required",
 		})
 		return
 	}
@@ -59,8 +75,8 @@ func BulkContactSync(c *gin.Context) {
 		return
 	}
 
-	// Add token to request header
-	req.Header.Set("token", token)
+	// Add WhatsApp session token to request header
+	req.Header.Set("token", whatsappToken)
 
 	// Execute request
 	client := &http.Client{}
@@ -87,7 +103,7 @@ func BulkContactSync(c *gin.Context) {
 	}
 
 	// Parse response from external API
-	var syncResponse models.ContactSyncResponse
+	var syncResponse models.ExternalContactSyncResponse
 	if err := json.Unmarshal(body, &syncResponse); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
@@ -111,41 +127,57 @@ func BulkContactSync(c *gin.Context) {
 	db := database.GetTransactionalDB()
 	var savedContacts []models.WhatsAppContact
 
-	for contactJID, contactData := range syncResponse.Data {
-		// Check if contact already exists using Take() which doesn't log "record not found"
+	fmt.Printf("Processing %d contacts from sync response\n", len(syncResponse.Data))
+
+	for phoneNumber, contactData := range syncResponse.Data {
+		// Extract clean phone number (remove @s.whatsapp.net or @lid)
+		cleanPhone := extractPhoneNumber(phoneNumber)
+		if cleanPhone == "" {
+			fmt.Printf("Skipping invalid phone: %s\n", phoneNumber)
+			continue
+		}
+
+		fmt.Printf("Processing contact: %s -> %s (%s)\n", phoneNumber, cleanPhone, contactData.FullName)
+
+		// Check if contact already exists for this user and phone
 		var existingContact models.WhatsAppContact
-		err := db.Where("session_id = ? AND contact_jid = ?", session.ID, contactJID).Take(&existingContact).Error
+		err := db.Where("user_id = ? AND phone = ?", userID, cleanPhone).Take(&existingContact).Error
 
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// Contact doesn't exist, create new one
 			newContact := models.WhatsAppContact{
-				SessionID:    session.ID,
-				ContactJID:   contactJID,
-				BusinessName: contactData.BusinessName,
-				FirstName:    contactData.FirstName,
-				FullName:     contactData.FullName,
-				PushName:     contactData.PushName,
-				Found:        contactData.Found,
+				UserID:   userID.(string),
+				Phone:    cleanPhone,
+				Name:     contactData.FirstName,
+				FullName: contactData.FullName,
+				PushName: contactData.PushName,
+				Business: contactData.BusinessName != "",
+				Source:   "sync",
 			}
 
 			if err := db.Create(&newContact).Error; err != nil {
+				fmt.Printf("Failed to create contact %s: %v\n", cleanPhone, err)
 				continue // Skip this contact if failed to save
 			}
+			fmt.Printf("Created new contact: %s\n", cleanPhone)
 			savedContacts = append(savedContacts, newContact)
 		} else if err != nil {
 			// Other database error, skip this contact
+			fmt.Printf("Database error for contact %s: %v\n", cleanPhone, err)
 			continue
 		} else {
-			// Contact exists, update it
-			existingContact.BusinessName = contactData.BusinessName
-			existingContact.FirstName = contactData.FirstName
+			// Contact exists, replace with new data (sesuai requirement)
+			existingContact.Name = contactData.FirstName
 			existingContact.FullName = contactData.FullName
 			existingContact.PushName = contactData.PushName
-			existingContact.Found = contactData.Found
+			existingContact.Business = contactData.BusinessName != ""
+			existingContact.Source = "sync" // Update source to sync
 
 			if err := db.Save(&existingContact).Error; err != nil {
+				fmt.Printf("Failed to update contact %s: %v\n", cleanPhone, err)
 				continue // Skip this contact if failed to update
 			}
+			fmt.Printf("Replaced existing contact: %s\n", cleanPhone)
 			savedContacts = append(savedContacts, existingContact)
 		}
 	} // Return original response from external API along with storage status
@@ -160,31 +192,20 @@ func BulkContactSync(c *gin.Context) {
 
 // BulkContactList returns simplified contact list for the authenticated user
 func BulkContactList(c *gin.Context) {
-	// Get token from header
-	token := c.GetHeader("token")
-	if token == "" {
+	// Get user ID from JWT context
+	userID, exists := c.Get("user_id")
+	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"code":    401,
 			"success": false,
-			"message": "Token is required",
+			"message": "User ID not found",
 		})
 		return
 	}
 
-	// Validate token exists in transactional database
-	var session models.WhatsappSession
-	if err := database.GetTransactionalDB().Where("token = ?", token).First(&session).Error; err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    401,
-			"success": false,
-			"message": "Invalid token",
-		})
-		return
-	}
-
-	// Get contacts for this session from transactional database
+	// Get contacts for this user from transactional database
 	var contacts []models.WhatsAppContact
-	if err := database.GetTransactionalDB().Where("session_id = ? AND found = ?", session.ID, true).Find(&contacts).Error; err != nil {
+	if err := database.GetTransactionalDB().Where("user_id = ?", userID).Find(&contacts).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
 			"success": false,
@@ -194,45 +215,30 @@ func BulkContactList(c *gin.Context) {
 	}
 
 	// Convert to simplified response format
-	var contactList []models.ContactListResponse
+	var contactList []models.ContactSimple
 	for _, contact := range contacts {
-		// Extract phone number from JID
-		phoneNumber := extractPhoneFromJID(contact.ContactJID)
-
-		// Determine best name to use (priority: FullName > PushName > FirstName > BusinessName)
-		fullName := ""
-		if contact.FullName != "" {
-			fullName = contact.FullName
-		} else if contact.PushName != "" {
+		// Determine best name to use (priority: FullName > PushName > Name)
+		fullName := contact.FullName
+		if fullName == "" && contact.PushName != "" {
 			fullName = contact.PushName
-		} else if contact.FirstName != "" {
-			fullName = contact.FirstName
-		} else if contact.BusinessName != "" {
-			fullName = contact.BusinessName
+		}
+		if fullName == "" && contact.Name != "" {
+			fullName = contact.Name
 		}
 
-		// Only include contacts that have a name
-		if fullName != "" && phoneNumber != "" {
-			contactList = append(contactList, models.ContactListResponse{
-				Telp:     phoneNumber,
+		// Only include contacts that have a phone number
+		if contact.Phone != "" {
+			contactList = append(contactList, models.ContactSimple{
+				Phone:    contact.Phone,
 				FullName: fullName,
+				Source:   contact.Source,
 			})
 		}
 	}
 
-	c.JSON(http.StatusOK, models.BulkContactListResponse{
+	c.JSON(http.StatusOK, models.ContactListResponse{
 		Code:    200,
 		Success: true,
 		Data:    contactList,
 	})
-}
-
-// extractPhoneFromJID extracts phone number from WhatsApp JID
-// Examples: "6285215538030@s.whatsapp.net" -> "6285215538030", "136202103562334@lid" -> "136202103562334"
-func extractPhoneFromJID(jid string) string {
-	if strings.Contains(jid, "@") {
-		parts := strings.Split(jid, "@")
-		return parts[0]
-	}
-	return jid
 }
