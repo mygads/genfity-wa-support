@@ -109,7 +109,7 @@ func main() {
 		bulk.GET("/campaigns/:id", handlers.GetBulkCampaign)
 
 		// Cron job endpoint for processing scheduled campaigns
-		bulk.GET("/cron/process", handlers.BulkMessageCronJob)
+		bulk.GET("/cron/process", handlers.BulkCampaignCronJob)
 	}
 
 	// Get port from environment or default to 8070
