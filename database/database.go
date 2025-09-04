@@ -90,17 +90,18 @@ func initTransactionalDatabase() {
 	log.Println("Transactional database connected successfully")
 
 	// Auto migrate contact and campaign tables in transactional database
-	err = TransactionalDB.AutoMigrate(
-		&models.WhatsAppContact{},
-		&models.Campaign{},
-		&models.BulkCampaign{},
-		&models.BulkCampaignItem{},
-	)
-	if err != nil {
-		log.Printf("Warning: Failed to migrate tables in transactional database: %v", err)
-	} else {
-		log.Println("Contact and campaign tables migration completed in transactional database")
-	}
+	// err = TransactionalDB.AutoMigrate(
+	// 	&models.WhatsAppContact{},
+	// 	&models.Campaign{},
+	// 	&models.BulkCampaign{},
+	// 	&models.BulkCampaignItem{},
+	// 	&models.WhatsAppMessageStats{},
+	// )
+	// if err != nil {
+	// 	log.Printf("Warning: Failed to migrate tables in transactional database: %v", err)
+	// } else {
+	// 	log.Println("Contact and campaign tables migration completed in transactional database")
+	// }
 
 	// Check if required tables exist (read-only gateway)
 	checkRequiredTables()

@@ -162,11 +162,11 @@ func WhatsAppGateway(c *gin.Context) {
 	path := c.Request.URL.Path
 	method := c.Request.Method
 
-	log.Printf("DEBUG: Gateway received request - Method: %s, Path: %s", method, path)
+	// log.Printf("DEBUG: Gateway received request - Method: %s, Path: %s", method, path)
 
 	// Remove /wa prefix to get actual WA server path
 	actualPath := strings.TrimPrefix(path, "/wa")
-	log.Printf("DEBUG: Actual path after prefix removal: %s", actualPath)
+	// log.Printf("DEBUG: Actual path after prefix removal: %s", actualPath)
 
 	// Admin routes bypass all validation
 	if strings.HasPrefix(actualPath, "/admin") {

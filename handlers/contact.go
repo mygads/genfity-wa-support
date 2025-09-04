@@ -137,7 +137,7 @@ func BulkContactSync(c *gin.Context) {
 			continue
 		}
 
-		fmt.Printf("Processing contact: %s -> %s (%s)\n", phoneNumber, cleanPhone, contactData.FullName)
+		// fmt.Printf("Processing contact: %s -> %s (%s)\n", phoneNumber, cleanPhone, contactData.FullName)
 
 		// Check if contact already exists for this user and phone
 		var existingContact models.WhatsAppContact
@@ -159,7 +159,7 @@ func BulkContactSync(c *gin.Context) {
 				fmt.Printf("Failed to create contact %s: %v\n", cleanPhone, err)
 				continue // Skip this contact if failed to save
 			}
-			fmt.Printf("Created new contact: %s\n", cleanPhone)
+			// fmt.Printf("Created new contact: %s\n", cleanPhone)
 			savedContacts = append(savedContacts, newContact)
 		} else if err != nil {
 			// Other database error, skip this contact
@@ -177,7 +177,7 @@ func BulkContactSync(c *gin.Context) {
 				fmt.Printf("Failed to update contact %s: %v\n", cleanPhone, err)
 				continue // Skip this contact if failed to update
 			}
-			fmt.Printf("Replaced existing contact: %s\n", cleanPhone)
+			// fmt.Printf("Replaced existing contact: %s\n", cleanPhone)
 			savedContacts = append(savedContacts, existingContact)
 		}
 	} // Return original response from external API along with storage status
