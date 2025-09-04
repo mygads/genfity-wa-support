@@ -92,6 +92,7 @@ func main() {
 		bulk.POST("/contact/sync", handlers.BulkContactSync)
 		bulk.GET("/contact", handlers.BulkContactList)
 		bulk.POST("/contact/add", handlers.AddContacts)
+		bulk.DELETE("/contact/delete", handlers.BulkDeleteContacts)
 
 		// Campaign management endpoints
 		campaign := bulk.Group("/campaign")

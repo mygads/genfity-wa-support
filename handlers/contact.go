@@ -242,3 +242,69 @@ func BulkContactList(c *gin.Context) {
 		Data:    contactList,
 	})
 }
+
+// BulkDeleteContacts deletes multiple contacts by phone numbers for the authenticated user
+func BulkDeleteContacts(c *gin.Context) {
+	// Get user ID from JWT context
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"code":    401,
+			"success": false,
+			"message": "User ID not found",
+		})
+		return
+	}
+
+	// Parse request body
+	var req struct {
+		Phone []string `json:"phone" binding:"required,min=1"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"success": false,
+			"message": fmt.Sprintf("Invalid request: %v", err),
+		})
+		return
+	}
+
+	// Get database connection
+	db := database.GetTransactionalDB()
+
+	// Count contacts before deletion for reporting
+	var totalContacts int64
+	db.Model(&models.WhatsAppContact{}).Where("user_id = ? AND phone IN ?", userID, req.Phone).Count(&totalContacts)
+
+	if totalContacts == 0 {
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    404,
+			"success": false,
+			"message": "No contacts found for the provided phone numbers",
+		})
+		return
+	}
+
+	// Delete contacts
+	result := db.Where("user_id = ? AND phone IN ?", userID, req.Phone).Delete(&models.WhatsAppContact{})
+
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"success": false,
+			"message": fmt.Sprintf("Failed to delete contacts: %v", result.Error),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"success": true,
+		"message": fmt.Sprintf("Successfully deleted %d contacts", result.RowsAffected),
+		"data": gin.H{
+			"deleted_count":   result.RowsAffected,
+			"requested_count": len(req.Phone),
+		},
+	})
+}

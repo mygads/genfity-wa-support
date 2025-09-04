@@ -137,6 +137,68 @@ Content-Type: application/json
 }
 ```
 
+#### D. Delete Contacts (Bulk)
+Menghapus multiple contacts berdasarkan nomor telepon.
+
+**Endpoint:** `DELETE /bulk/contact/delete`
+
+**Headers:**
+```
+Authorization: Bearer <your-jwt-token>
+Content-Type: application/json
+```
+
+**Request Body:**
+```json
+{
+  "phone": [
+    "628123456789",
+    "628987654321",
+    "628555666777"
+  ]
+}
+```
+
+**Catatan Penting:**
+- Hanya contacts milik user yang terautentikasi yang bisa dihapus
+- Jika nomor telepon tidak ditemukan atau bukan milik user, akan diabaikan
+- Response akan menunjukkan jumlah contacts yang berhasil dihapus
+
+**Response Success (200):**
+```json
+{
+  "code": 200,
+  "success": true,
+  "message": "Successfully deleted 3 contacts",
+  "data": {
+    "deleted_count": 3,
+    "requested_count": 3
+  }
+}
+```
+
+**Response Success (Partial) (200):**
+```json
+{
+  "code": 200,
+  "success": true,
+  "message": "Successfully deleted 2 contacts",
+  "data": {
+    "deleted_count": 2,
+    "requested_count": 3
+  }
+}
+```
+
+**Response Error (404):**
+```json
+{
+  "code": 404,
+  "success": false,
+  "message": "No contacts found for the provided phone numbers"
+}
+```
+
 ### 2. Campaign Template Management
 
 #### A. Create Campaign Template
@@ -588,7 +650,26 @@ curl -X POST "https://api.example.com/bulk/contact/sync" \
 curl -X GET "https://api.example.com/bulk/contact" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 
-# 3. Buat campaign template (hanya perlu JWT)
+# 3. Tambah contacts secara manual (hanya perlu JWT)
+curl -X POST "https://api.example.com/bulk/contact/add" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contacts": [
+      {"phone": "628123456789", "full_name": "John Doe"},
+      {"phone": "628987654321", "full_name": "Jane Smith"}
+    ]
+  }'
+
+# 4. Hapus contacts (bulk delete) (hanya perlu JWT)
+curl -X DELETE "https://api.example.com/bulk/contact/delete" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "phone": ["628123456789", "628987654321"]
+  }'
+
+# 5. Buat campaign template (hanya perlu JWT)
 curl -X POST "https://api.example.com/bulk/campaign" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
@@ -598,7 +679,7 @@ curl -X POST "https://api.example.com/bulk/campaign" \
     "message_body": "Selamat datang di layanan kami!"
   }'
 
-# 4. Execute bulk campaign (hanya perlu JWT)
+# 6. Execute bulk campaign (hanya perlu JWT)
 curl -X POST "https://api.example.com/bulk/campaign/execute" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -H "Content-Type: application/json" \
@@ -609,7 +690,7 @@ curl -X POST "https://api.example.com/bulk/campaign/execute" \
     "send_sync": "now"
   }'
 
-# 5. Monitor bulk campaign detail (hanya perlu JWT)
+# 7. Monitor bulk campaign detail (hanya perlu JWT)
 curl -X GET "https://api.example.com/bulk/campaigns/1" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
@@ -621,7 +702,10 @@ curl -X GET "https://api.example.com/bulk/campaigns/1" \
    - **JWT Bearer token** (`Authorization: Bearer <jwt>`) - untuk autentikasi dan autorisasi user
    - **WhatsApp session token** (`token: <whatsapp-token>`) - untuk akses ke server WhatsApp eksternal (hanya diperlukan untuk contact sync)
 3. **User Ownership:** Setiap user hanya bisa mengakses campaign dan contact miliknya sendiri
-4. **Contact Sync:** Hanya endpoint `/bulk/contact/sync` yang memerlukan kedua token
+4. **Contact Management:**
+   - **Contact Sync:** Hanya endpoint `/bulk/contact/sync` yang memerlukan kedua token
+   - **Contact CRUD:** Endpoint `/bulk/contact/add` dan `/bulk/contact/delete` hanya memerlukan JWT token
+   - **Contact List:** Endpoint `/bulk/contact` untuk melihat semua contacts milik user
 5. **Campaign Templates:** Dapat digunakan berulang kali untuk multiple bulk campaigns
 6. **Scheduling:** Mendukung penjadwalan campaign untuk eksekusi di masa depan
 7. **Monitoring:** Detail tracking per nomor telepon untuk monitoring hasil pengiriman

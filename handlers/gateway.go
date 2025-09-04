@@ -220,9 +220,9 @@ func WhatsAppGateway(c *gin.Context) {
 	// Proxy to WhatsApp server with special handling for image endpoints
 	statusCode := proxyToWAServerWithProcessing(c, actualPath)
 
-	// Track successful message sends
-	if isMessageEndpoint(actualPath) && method == "POST" && statusCode >= 200 && statusCode < 300 {
-		go trackMessageStats(userID, token, actualPath, c)
+	// Track message stats based on success/failure
+	if isMessageEndpoint(actualPath) && method == "POST" {
+		go trackMessageStats(userID, token, actualPath, c, statusCode >= 200 && statusCode < 300)
 	}
 }
 
@@ -533,8 +533,27 @@ func isMessageEndpoint(path string) bool {
 	return false
 }
 
-// trackMessageStats tracks successful message sends in WhatsAppMessageStats table
-func trackMessageStats(userID, token, path string, c *gin.Context) {
+// extractMessageTypeFromPath extracts message type from the API path
+func extractMessageTypeFromPath(path string) string {
+	// Remove /wa prefix if present
+	path = strings.TrimPrefix(path, "/wa")
+
+	// Extract message type from paths like /chat/send/text, /chat/send/image, etc.
+	if strings.Contains(path, "/chat/send/") {
+		parts := strings.Split(path, "/")
+		if len(parts) >= 4 {
+			messageType := parts[3] // text, image, document, audio, etc.
+			return messageType
+		}
+	}
+
+	// Default to text if can't determine
+	return "text"
+}
+func trackMessageStats(userID, token, path string, c *gin.Context, success bool) {
+	// Extract message type from path
+	messageType := extractMessageTypeFromPath(path)
+
 	// Find session by token to get sessionId
 	var session models.WhatsappSession
 	if err := database.TransactionalDB.Where("token = ?", token).First(&session).Error; err != nil {
@@ -551,14 +570,22 @@ func trackMessageStats(userID, token, path string, c *gin.Context) {
 	if err == gorm.ErrRecordNotFound {
 		// Create new stats record
 		stats = models.WhatsAppMessageStats{
-			ID:                  uuid.New().String(),
-			UserID:              userID,
-			SessionID:           session.SessionID,
-			TotalMessagesSent:   1,
-			TotalMessagesFailed: 0,
-			LastMessageSentAt:   &now,
-			CreatedAt:           now,
-			UpdatedAt:           now,
+			ID:        uuid.New().String(),
+			UserID:    userID,
+			SessionID: session.SessionID,
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+
+		// Initialize counters based on success/failure
+		if success {
+			stats.TotalMessagesSent = 1
+			updateMessageTypeCounter(&stats, messageType, true)
+			stats.LastMessageSentAt = &now
+		} else {
+			stats.TotalMessagesFailed = 1
+			updateMessageTypeCounter(&stats, messageType, false)
+			stats.LastMessageFailedAt = &now
 		}
 
 		if err := database.TransactionalDB.Create(&stats).Error; err != nil {
@@ -566,8 +593,15 @@ func trackMessageStats(userID, token, path string, c *gin.Context) {
 		}
 	} else if err == nil {
 		// Update existing stats record
-		stats.TotalMessagesSent++
-		stats.LastMessageSentAt = &now
+		if success {
+			stats.TotalMessagesSent++
+			updateMessageTypeCounter(&stats, messageType, true)
+			stats.LastMessageSentAt = &now
+		} else {
+			stats.TotalMessagesFailed++
+			updateMessageTypeCounter(&stats, messageType, false)
+			stats.LastMessageFailedAt = &now
+		}
 		stats.UpdatedAt = now
 
 		if err := database.TransactionalDB.Save(&stats).Error; err != nil {

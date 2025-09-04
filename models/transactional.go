@@ -66,11 +66,34 @@ func (ServicesWhatsappCustomers) TableName() string {
 
 // WhatsAppMessageStats model - sesuai dengan skema Prisma
 type WhatsAppMessageStats struct {
-	ID                  string     `json:"id" gorm:"primaryKey;type:varchar(30);column:id"`
-	UserID              string     `json:"userId" gorm:"index;not null;column:userId"`
-	SessionID           string     `json:"sessionId" gorm:"index;not null;column:sessionId"`
-	TotalMessagesSent   int        `json:"totalMessagesSent" gorm:"default:0;column:totalMessagesSent"`
-	TotalMessagesFailed int        `json:"totalMessagesFailed" gorm:"default:0;column:totalMessagesFailed"`
+	ID        string `json:"id" gorm:"primaryKey;type:varchar(30);column:id"`
+	UserID    string `json:"userId" gorm:"index;not null;column:userId"`
+	SessionID string `json:"sessionId" gorm:"index;not null;column:sessionId"`
+
+	// Total counters (existing)
+	TotalMessagesSent   int `json:"totalMessagesSent" gorm:"default:0;column:totalMessagesSent"`
+	TotalMessagesFailed int `json:"totalMessagesFailed" gorm:"default:0;column:totalMessagesFailed"`
+
+	// Message type counters
+	TextMessagesSent       int `json:"textMessagesSent" gorm:"default:0;column:textMessagesSent"`
+	TextMessagesFailed     int `json:"textMessagesFailed" gorm:"default:0;column:textMessagesFailed"`
+	ImageMessagesSent      int `json:"imageMessagesSent" gorm:"default:0;column:imageMessagesSent"`
+	ImageMessagesFailed    int `json:"imageMessagesFailed" gorm:"default:0;column:imageMessagesFailed"`
+	DocumentMessagesSent   int `json:"documentMessagesSent" gorm:"default:0;column:documentMessagesSent"`
+	DocumentMessagesFailed int `json:"documentMessagesFailed" gorm:"default:0;column:documentMessagesFailed"`
+	AudioMessagesSent      int `json:"audioMessagesSent" gorm:"default:0;column:audioMessagesSent"`
+	AudioMessagesFailed    int `json:"audioMessagesFailed" gorm:"default:0;column:audioMessagesFailed"`
+	StickerMessagesSent    int `json:"stickerMessagesSent" gorm:"default:0;column:stickerMessagesSent"`
+	StickerMessagesFailed  int `json:"stickerMessagesFailed" gorm:"default:0;column:stickerMessagesFailed"`
+	VideoMessagesSent      int `json:"videoMessagesSent" gorm:"default:0;column:videoMessagesSent"`
+	VideoMessagesFailed    int `json:"videoMessagesFailed" gorm:"default:0;column:videoMessagesFailed"`
+	LocationMessagesSent   int `json:"locationMessagesSent" gorm:"default:0;column:locationMessagesSent"`
+	LocationMessagesFailed int `json:"locationMessagesFailed" gorm:"default:0;column:locationMessagesFailed"`
+	ContactMessagesSent    int `json:"contactMessagesSent" gorm:"default:0;column:contactMessagesSent"`
+	ContactMessagesFailed  int `json:"contactMessagesFailed" gorm:"default:0;column:contactMessagesFailed"`
+	TemplateMessagesSent   int `json:"templateMessagesSent" gorm:"default:0;column:templateMessagesSent"`
+	TemplateMessagesFailed int `json:"templateMessagesFailed" gorm:"default:0;column:templateMessagesFailed"`
+
 	LastMessageSentAt   *time.Time `json:"lastMessageSentAt" gorm:"column:lastMessageSentAt"`
 	LastMessageFailedAt *time.Time `json:"lastMessageFailedAt" gorm:"column:lastMessageFailedAt"`
 	CreatedAt           time.Time  `json:"createdAt" gorm:"autoCreateTime;column:createdAt"`

@@ -638,11 +638,15 @@ func processBulkCampaign(bulkCampaignID uint) {
 			itemUpdates["message_id"] = messageID
 			itemUpdates["sent_at"] = &now
 			sentCount++
+			// Track message stats for successful send
+			trackCampaignMessageStats(*whatsappSession.UserID, whatsappSession.Token, true, string(bulkCampaign.Type))
 		} else {
 			itemUpdates["status"] = models.BulkCampaignItemStatusFailed
 			itemUpdates["error_message"] = errorMsg
 			failedCount++
 			log.Printf("[BULK_CAMPAIGN] Failed to send message to %s: %s", item.Phone, errorMsg)
+			// Track message stats for failed send
+			trackCampaignMessageStats(*whatsappSession.UserID, whatsappSession.Token, false, string(bulkCampaign.Type))
 		}
 
 		if err := database.TransactionalDB.Model(&item).Updates(itemUpdates).Error; err != nil {
@@ -861,7 +865,7 @@ func BulkCampaignCronJob(c *gin.Context) {
 }
 
 // trackCampaignMessageStats tracks message statistics for campaign sends
-func trackCampaignMessageStats(userID, whatsappToken string, success bool) {
+func trackCampaignMessageStats(userID, whatsappToken string, success bool, messageType string) {
 	// Find WhatsApp session by token to get sessionId
 	var session models.WhatsappSession
 	if err := database.TransactionalDB.Where("token = ?", whatsappToken).First(&session).Error; err != nil {
@@ -884,13 +888,15 @@ func trackCampaignMessageStats(userID, whatsappToken string, success bool) {
 			UpdatedAt: now,
 		}
 
+		// Initialize counters based on message type
 		if success {
 			stats.TotalMessagesSent = 1
-			stats.TotalMessagesFailed = 0
+			updateMessageTypeCounter(&stats, messageType, true)
 			stats.LastMessageSentAt = &now
 		} else {
-			stats.TotalMessagesSent = 0
 			stats.TotalMessagesFailed = 1
+			updateMessageTypeCounter(&stats, messageType, false)
+			stats.LastMessageFailedAt = &now
 		}
 
 		if err := database.TransactionalDB.Create(&stats).Error; err != nil {
@@ -900,9 +906,12 @@ func trackCampaignMessageStats(userID, whatsappToken string, success bool) {
 		// Update existing stats record
 		if success {
 			stats.TotalMessagesSent++
+			updateMessageTypeCounter(&stats, messageType, true)
 			stats.LastMessageSentAt = &now
 		} else {
 			stats.TotalMessagesFailed++
+			updateMessageTypeCounter(&stats, messageType, false)
+			stats.LastMessageFailedAt = &now
 		}
 		stats.UpdatedAt = now
 
@@ -938,6 +947,69 @@ func sendWhatsAppMessageWithRetry(serverURL, sessionToken, phone string, campaig
 	}
 
 	return false, "", fmt.Sprintf("Failed after %d attempts: %s", maxRetries, lastError)
+}
+
+// updateMessageTypeCounter updates the appropriate counter based on message type
+func updateMessageTypeCounter(stats *models.WhatsAppMessageStats, messageType string, success bool) {
+	switch strings.ToLower(messageType) {
+	case "text":
+		if success {
+			stats.TextMessagesSent++
+		} else {
+			stats.TextMessagesFailed++
+		}
+	case "image":
+		if success {
+			stats.ImageMessagesSent++
+		} else {
+			stats.ImageMessagesFailed++
+		}
+	case "document":
+		if success {
+			stats.DocumentMessagesSent++
+		} else {
+			stats.DocumentMessagesFailed++
+		}
+	case "audio":
+		if success {
+			stats.AudioMessagesSent++
+		} else {
+			stats.AudioMessagesFailed++
+		}
+	case "sticker":
+		if success {
+			stats.StickerMessagesSent++
+		} else {
+			stats.StickerMessagesFailed++
+		}
+	case "video":
+		if success {
+			stats.VideoMessagesSent++
+		} else {
+			stats.VideoMessagesFailed++
+		}
+	case "location":
+		if success {
+			stats.LocationMessagesSent++
+		} else {
+			stats.LocationMessagesFailed++
+		}
+	case "contact":
+		if success {
+			stats.ContactMessagesSent++
+		} else {
+			stats.ContactMessagesFailed++
+		}
+	case "template":
+		if success {
+			stats.TemplateMessagesSent++
+		} else {
+			stats.TemplateMessagesFailed++
+		}
+	default:
+		// For unknown types, still count in total but log it
+		log.Printf("[BULK_CAMPAIGN] Unknown message type for stats: %s", messageType)
+	}
 }
 
 // downloadAndEncodeImageForCampaign downloads an image from URL and returns base64 encoded data URI
