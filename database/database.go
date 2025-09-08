@@ -5,8 +5,6 @@ import (
 	"log"
 	"os"
 
-	"genfity-chat-ai/models"
-
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -47,24 +45,25 @@ func initPrimaryDatabase() {
 	log.Println("Primary database connected successfully")
 
 	// Auto migrate the schema for webhook events
-	err = DB.AutoMigrate(
-		&models.GenEventWebhook{},
-		&models.WhatsAppMessage{},
-		&models.WhatsAppReadReceipt{},
-		&models.WhatsAppPresence{},
-		&models.WhatsAppChatPresence{},
-		&models.WhatsAppHistorySync{},
-		&models.WhatsAppSession{},
-		&models.WhatsAppMessageStatus{},
-		&models.UserSettings{},
-		&models.ChatRoom{},
-		&models.ChatMessage{},
-	)
-	if err != nil {
-		log.Fatal("Failed to migrate primary database:", err)
-	}
+	// Comment out auto migration to prevent automatic schema changes
+	// err = DB.AutoMigrate(
+	// 	&models.GenEventWebhook{},
+	// 	&models.WhatsAppMessage{},
+	// 	&models.WhatsAppReadReceipt{},
+	// 	&models.WhatsAppPresence{},
+	// 	&models.WhatsAppChatPresence{},
+	// 	&models.WhatsAppHistorySync{},
+	// 	&models.WhatsAppSession{},
+	// 	&models.WhatsAppMessageStatus{},
+	// 	&models.UserSettings{},
+	// 	&models.ChatRoom{},
+	// 	&models.ChatMessage{},
+	// )
+	// if err != nil {
+	// 	log.Fatal("Failed to migrate primary database:", err)
+	// }
 
-	log.Println("Primary database migration completed")
+	log.Println("Primary database migration skipped (auto migration disabled)")
 }
 
 // initTransactionalDatabase initializes the transactional database connection
