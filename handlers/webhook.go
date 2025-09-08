@@ -1313,7 +1313,7 @@ func HealthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "healthy",
 		"time":    time.Now().Format(time.RFC3339),
-		"service": "genfity-chat-ai",
+		"service": "genfity-wa-support",
 	})
 }
 
