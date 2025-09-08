@@ -5,6 +5,8 @@ import (
 	"log"
 	"os"
 
+	"genfity-wa-support/models"
+
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -44,26 +46,10 @@ func initPrimaryDatabase() {
 
 	log.Println("Primary database connected successfully")
 
-	// Auto migrate the schema for webhook events
-	// Comment out auto migration to prevent automatic schema changes
-	// err = DB.AutoMigrate(
-	// 	&models.GenEventWebhook{},
-	// 	&models.WhatsAppMessage{},
-	// 	&models.WhatsAppReadReceipt{},
-	// 	&models.WhatsAppPresence{},
-	// 	&models.WhatsAppChatPresence{},
-	// 	&models.WhatsAppHistorySync{},
-	// 	&models.WhatsAppSession{},
-	// 	&models.WhatsAppMessageStatus{},
-	// 	&models.UserSettings{},
-	// 	&models.ChatRoom{},
-	// 	&models.ChatMessage{},
-	// )
-	// if err != nil {
-	// 	log.Fatal("Failed to migrate primary database:", err)
-	// }
-
-	log.Println("Primary database migration skipped (auto migration disabled)")
+	// Auto migrate all primary tables (create if not exist)
+	if err := autoMigratePrimaryTables(); err != nil {
+		log.Fatal("Failed to migrate primary database:", err)
+	}
 }
 
 // initTransactionalDatabase initializes the transactional database connection
@@ -134,4 +120,51 @@ func GetDB() *gorm.DB {
 // GetTransactionalDB returns the transactional database instance
 func GetTransactionalDB() *gorm.DB {
 	return TransactionalDB
+}
+
+// autoMigratePrimaryTables checks and migrates only tables that don't exist
+func autoMigratePrimaryTables() error {
+	tables := []struct {
+		name  string
+		model interface{}
+	}{
+		{"gen_event_webhooks", &models.GenEventWebhook{}},
+		{"whats_app_messages", &models.WhatsAppMessage{}},
+		{"whats_app_read_receipts", &models.WhatsAppReadReceipt{}},
+		{"whats_app_presences", &models.WhatsAppPresence{}},
+		{"whats_app_chat_presences", &models.WhatsAppChatPresence{}},
+		{"whats_app_history_syncs", &models.WhatsAppHistorySync{}},
+		{"whats_app_sessions", &models.WhatsAppSession{}},
+		{"whats_app_message_statuses", &models.WhatsAppMessageStatus{}},
+		{"user_settings", &models.UserSettings{}},
+		{"chat_rooms", &models.ChatRoom{}},
+		{"chat_messages", &models.ChatMessage{}},
+	}
+
+	migratedCount := 0
+	skippedCount := 0
+
+	log.Println("Checking primary database tables...")
+
+	for _, table := range tables {
+		if !DB.Migrator().HasTable(table.model) {
+			log.Printf("Table '%s' not found, creating...", table.name)
+			err := DB.AutoMigrate(table.model)
+			if err != nil {
+				return fmt.Errorf("failed to migrate table %s: %v", table.name, err)
+			}
+			log.Printf("✓ Created table: %s", table.name)
+			migratedCount++
+		} else {
+			log.Printf("✓ Table '%s' already exists, skipping", table.name)
+			skippedCount++
+		}
+	}
+
+	if migratedCount > 0 {
+		log.Printf("Primary database migration completed: %d tables created, %d tables skipped", migratedCount, skippedCount)
+	} else {
+		log.Printf("All primary database tables already exist (%d tables), no migration needed", skippedCount)
+	}
+	return nil
 }

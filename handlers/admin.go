@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"genfity-chat-ai/database"
-	"genfity-chat-ai/models"
+	"genfity-wa-support/database"
+	"genfity-wa-support/models"
 
 	"github.com/gin-gonic/gin"
 )

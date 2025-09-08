@@ -4,9 +4,9 @@ import (
 	"log"
 	"os"
 
-	"genfity-chat-ai/database"
-	"genfity-chat-ai/handlers"
-	"genfity-chat-ai/middleware"
+	"genfity-wa-support/database"
+	"genfity-wa-support/handlers"
+	"genfity-wa-support/middleware"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"

@@ -1,4 +1,4 @@
-module genfity-chat-ai
+module genfity-wa-support
 
 go 1.23
 

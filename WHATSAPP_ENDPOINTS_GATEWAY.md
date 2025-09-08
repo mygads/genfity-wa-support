@@ -276,5 +276,5 @@ Untuk pertanyaan atau issue terkait gateway implementation:
 
 1. Check [Gateway Documentation](./GATEWAY_DOCUMENTATION.md)
 2. Review [API Testing Guide](./API_TESTING_GATEWAY.md)
-3. Monitor gateway logs: `docker compose logs -f genfity-chat-ai`
+3. Monitor gateway logs: `docker compose logs -f genfity-wa-support`
 4. Test health check: `curl http://localhost:8070/api/wa/health`

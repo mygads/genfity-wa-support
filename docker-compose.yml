@@ -1,9 +1,9 @@
 services:
-  genfity-chat-ai:
+  genfity-wa-support:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: genfity-chat-ai
+    container_name: genfity-wa-support
     environment:
       # Primary Database
       - DB_HOST=${DB_HOST}
@@ -53,7 +53,7 @@ services:
 
   db-check:
     image: postgres:16
-    container_name: chat-ai-db-check
+    container_name: wa-support-db-check
     environment:
       - PGHOST=${DB_HOST}
       - PGPORT=${DB_PORT}

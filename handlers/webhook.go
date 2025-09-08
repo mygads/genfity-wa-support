@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"genfity-chat-ai/database"
-	"genfity-chat-ai/models"
+	"genfity-wa-support/database"
+	"genfity-wa-support/models"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -1314,6 +1314,7 @@ func HealthCheck(c *gin.Context) {
 		"status":  "healthy",
 		"time":    time.Now().Format(time.RFC3339),
 		"service": "genfity-wa-support",
+		"version": "1.0.0",
 	})
 }
 

@@ -55,7 +55,7 @@ DB_HOST=localhost
 DB_PORT=5432
 DB_USER=postgres
 DB_PASSWORD=password
-DB_NAME=chat-ai_db
+DB_NAME=wa-support_db
 DB_SSLMODE=disable
 
 # Transactional Database

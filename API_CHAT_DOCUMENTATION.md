@@ -363,7 +363,7 @@ Health check endpoint.
 {
   "status": "healthy",
   "time": "2025-08-15T10:30:00Z",
-  "service": "genfity-chat-ai"
+  "service": "genfity-wa-support"
 }
 ```
 
