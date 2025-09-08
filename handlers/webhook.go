@@ -1314,7 +1314,7 @@ func HealthCheck(c *gin.Context) {
 		"status":  "healthy",
 		"time":    time.Now().Format(time.RFC3339),
 		"service": "genfity-wa-support",
-		"version": "1.0.0",
+		"version": "1.0.1",
 	})
 }
 
