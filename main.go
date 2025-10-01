@@ -84,6 +84,9 @@ func main() {
 		}
 	}
 
+	// Public cron job endpoint (no authentication required)
+	router.GET("/bulk/cron/process", handlers.BulkCampaignCronJob)
+
 	// Bulk contact and campaign endpoints
 	bulk := router.Group("/bulk")
 	bulk.Use(middleware.JWTMiddleware()) // Use JWT authentication instead of session
@@ -108,9 +111,6 @@ func main() {
 		bulk.POST("/campaign/execute", handlers.CreateBulkCampaign)
 		bulk.GET("/campaigns", handlers.GetBulkCampaigns)
 		bulk.GET("/campaigns/:id", handlers.GetBulkCampaign)
-
-		// Cron job endpoint for processing scheduled campaigns
-		bulk.GET("/cron/process", handlers.BulkCampaignCronJob)
 	}
 
 	// Get port from environment or default to 8070
