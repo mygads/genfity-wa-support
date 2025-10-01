@@ -38,6 +38,9 @@ func main() {
 		c.Next()
 	})
 
+	// Home page
+	router.GET("/", handlers.HomePage)
+
 	// Health check
 	router.GET("/health", handlers.HealthCheck)
 

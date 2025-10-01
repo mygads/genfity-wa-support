@@ -1318,6 +1318,27 @@ func HealthCheck(c *gin.Context) {
 	})
 }
 
+// HomePage endpoint for root path
+func HomePage(c *gin.Context) {
+	now := time.Now()
+	serverName := os.Getenv("SERVER_NAME")
+	if serverName == "" {
+		serverName = "Genfity WhatsApp Support API"
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":      "running",
+		"server":      serverName,
+		"service":     "genfity-wa-support",
+		"version":     "1.0.1",
+		"time":        now.Format("2006-01-02 15:04:05"),
+		"timezone":    now.Format("MST"),
+		"timestamp":   now.Unix(),
+		"message":     "Server is running successfully",
+		"environment": gin.Mode(),
+	})
+}
+
 // GetSessions retrieves WhatsApp sessions with their status
 func GetSessions(c *gin.Context) {
 	db := database.GetDB()
