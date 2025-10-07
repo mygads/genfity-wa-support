@@ -323,13 +323,13 @@ func CreateBulkCampaign(c *gin.Context) {
 		return
 	}
 
-	// Parse scheduling
-	scheduledAt, err := parseSendSync(req.SendSync)
+	// Parse scheduling with timezone
+	scheduledAt, timezone, err := parseSendSyncWithTimezone(req.SendSync, req.Timezone)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.BulkCampaignResponse{
 			Code:    400,
 			Success: false,
-			Message: fmt.Sprintf("Invalid send_sync format: %v", err),
+			Message: fmt.Sprintf("Invalid send_sync or timezone: %v", err),
 		})
 		return
 	}
@@ -355,6 +355,7 @@ func CreateBulkCampaign(c *gin.Context) {
 		Status:      status,
 		TotalCount:  len(req.Phone),
 		ScheduledAt: scheduledAt,
+		Timezone:    timezone,
 	}
 
 	// Start transaction
@@ -402,11 +403,13 @@ func CreateBulkCampaign(c *gin.Context) {
 		TotalRecipients int        `json:"total_recipients"`
 		Status          string     `json:"status"`
 		ScheduledAt     *time.Time `json:"scheduled_at,omitempty"`
+		Timezone        string     `json:"timezone,omitempty"`
 	}{
 		BulkCampaignID:  bulkCampaign.ID,
 		TotalRecipients: len(req.Phone),
 		Status:          string(status),
 		ScheduledAt:     scheduledAt,
+		Timezone:        timezone,
 	}
 
 	c.JSON(http.StatusCreated, models.BulkCampaignResponse{
@@ -572,6 +575,65 @@ func GetBulkCampaign(c *gin.Context) {
 		Code:    200,
 		Success: true,
 		Data:    &responseData,
+	})
+}
+
+// DeleteBulkCampaign deletes a bulk campaign
+func DeleteBulkCampaign(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"code":    401,
+			"success": false,
+			"message": "User ID not found",
+		})
+		return
+	}
+
+	bulkCampaignID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"success": false,
+			"message": "Invalid bulk campaign ID",
+		})
+		return
+	}
+
+	var bulkCampaign models.BulkCampaign
+	if err := database.TransactionalDB.Where("id = ? AND user_id = ?", bulkCampaignID, userID).First(&bulkCampaign).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"code":    404,
+			"success": false,
+			"message": "Bulk campaign not found",
+		})
+		return
+	}
+
+	// Prevent deletion of campaigns that are currently processing
+	if bulkCampaign.Status == models.BulkCampaignStatusProcessing {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"success": false,
+			"message": "Cannot delete campaign that is currently processing",
+		})
+		return
+	}
+
+	// Delete the bulk campaign (cascade will delete items automatically)
+	if err := database.TransactionalDB.Delete(&bulkCampaign).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"success": false,
+			"message": fmt.Sprintf("Failed to delete bulk campaign: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"success": true,
+		"message": "Bulk campaign deleted successfully",
 	})
 }
 
@@ -1109,4 +1171,148 @@ func isSupportedImageFormat(mimeType string) bool {
 	}
 
 	return false
+}
+
+// parseSendSyncWithTimezone parses the SendSync field with timezone support
+// Returns: scheduledTime (in UTC), timezone string, error
+// Supports both UTC offset (+07:00, -05:00) and IANA timezone names (Asia/Jakarta)
+func parseSendSyncWithTimezone(sendSync string, userTimezone string) (*time.Time, string, error) {
+	sendSync = strings.TrimSpace(strings.ToLower(sendSync))
+
+	// Immediate execution - no timezone needed
+	if sendSync == "now" || sendSync == "sekarang" {
+		return nil, "", nil
+	}
+
+	// For scheduled campaigns, timezone is required
+	if userTimezone == "" {
+		return nil, "", fmt.Errorf("timezone is required for scheduled campaigns (e.g., '+07:00', '-05:00', or 'Asia/Jakarta')")
+	}
+
+	var loc *time.Location
+	var err error
+
+	// Try to parse as UTC offset first (e.g., +07:00, -05:00, +05:30)
+	if strings.HasPrefix(userTimezone, "+") || strings.HasPrefix(userTimezone, "-") {
+		// Parse UTC offset
+		loc, err = parseUTCOffset(userTimezone)
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid UTC offset '%s': %v (use format like '+07:00', '-05:00', '+05:30')", userTimezone, err)
+		}
+	} else {
+		// Try to load as IANA timezone name
+		loc, err = time.LoadLocation(userTimezone)
+		if err != nil {
+			return nil, "", fmt.Errorf("invalid timezone '%s': %v (use UTC offset like '+07:00' or IANA timezone names like 'Asia/Jakarta')", userTimezone, err)
+		}
+	}
+
+	// Try to parse datetime in various formats (assuming it's in user's timezone)
+	formats := []string{
+		"2006-01-02 15:04:05", // 2023-12-25 14:30:00
+		"2006-01-02 15:04",    // 2023-12-25 14:30
+		"2006-01-02T15:04:05", // 2023-12-25T14:30:00
+		"02/01/2006 15:04",    // 25/12/2023 14:30
+		"02-01-2006 15:04",    // 25-12-2023 14:30
+	}
+
+	var parsedTime time.Time
+	var parseSuccess bool
+
+	for _, format := range formats {
+		if t, err := time.ParseInLocation(format, sendSync, loc); err == nil {
+			parsedTime = t
+			parseSuccess = true
+			break
+		}
+	}
+
+	if !parseSuccess {
+		return nil, "", fmt.Errorf("invalid datetime format. Use formats like: 'YYYY-MM-DD HH:MM:SS', 'YYYY-MM-DD HH:MM', or 'DD/MM/YYYY HH:MM'")
+	}
+
+	// Convert to UTC for storage
+	utcTime := parsedTime.UTC()
+
+	// Ensure the scheduled time is in the future
+	if utcTime.Before(time.Now().UTC()) {
+		// Show current time in user's timezone for better error message
+		currentTimeInUserTZ := time.Now().In(loc).Format("2006-01-02 15:04:05")
+		return nil, "", fmt.Errorf("scheduled time must be in the future (current time in %s: %s)",
+			userTimezone, currentTimeInUserTZ)
+	}
+
+	return &utcTime, userTimezone, nil
+}
+
+// parseUTCOffset parses UTC offset string (e.g., "+07:00", "-05:00", "+05:30") and returns a time.Location
+func parseUTCOffset(offset string) (*time.Location, error) {
+	// Validate format
+	if len(offset) < 6 {
+		return nil, fmt.Errorf("offset too short, expected format: +HH:MM or -HH:MM")
+	}
+
+	// Extract sign
+	sign := offset[0]
+	if sign != '+' && sign != '-' {
+		return nil, fmt.Errorf("offset must start with + or -")
+	}
+
+	// Remove sign for parsing
+	offsetStr := offset[1:]
+
+	// Parse hours and minutes
+	var hours, minutes int
+	var err error
+
+	// Support both HH:MM and HHMM formats
+	if strings.Contains(offsetStr, ":") {
+		parts := strings.Split(offsetStr, ":")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid offset format, expected +HH:MM or -HH:MM")
+		}
+		hours, err = strconv.Atoi(parts[0])
+		if err != nil {
+			return nil, fmt.Errorf("invalid hours: %v", err)
+		}
+		minutes, err = strconv.Atoi(parts[1])
+		if err != nil {
+			return nil, fmt.Errorf("invalid minutes: %v", err)
+		}
+	} else if len(offsetStr) == 4 {
+		// HHMM format
+		hours, err = strconv.Atoi(offsetStr[0:2])
+		if err != nil {
+			return nil, fmt.Errorf("invalid hours: %v", err)
+		}
+		minutes, err = strconv.Atoi(offsetStr[2:4])
+		if err != nil {
+			return nil, fmt.Errorf("invalid minutes: %v", err)
+		}
+	} else {
+		return nil, fmt.Errorf("invalid offset format, expected +HH:MM or +HHMM")
+	}
+
+	// Validate ranges
+	if hours < 0 || hours > 14 {
+		return nil, fmt.Errorf("hours must be between 0 and 14")
+	}
+	if minutes < 0 || minutes > 59 {
+		return nil, fmt.Errorf("minutes must be between 0 and 59")
+	}
+
+	// Calculate total offset in seconds
+	totalSeconds := (hours * 3600) + (minutes * 60)
+
+	// Apply sign
+	if sign == '-' {
+		totalSeconds = -totalSeconds
+	}
+
+	// Create fixed timezone with the offset
+	// Format name as UTC+07:00 or UTC-05:00 for clarity
+	zoneName := fmt.Sprintf("UTC%s", offset)
+	loc := time.FixedZone(zoneName, totalSeconds)
+
+	return loc, nil
 }

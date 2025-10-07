@@ -82,6 +82,7 @@ type BulkCampaign struct {
 
 	// Scheduling
 	ScheduledAt *time.Time `json:"scheduled_at" gorm:"column:scheduled_at"`
+	Timezone    string     `json:"timezone" gorm:"column:timezone"` // User's timezone for scheduled campaigns
 	ProcessedAt *time.Time `json:"processed_at" gorm:"column:processed_at"`
 	CompletedAt *time.Time `json:"completed_at" gorm:"column:completed_at"`
 
@@ -161,6 +162,7 @@ type CreateBulkCampaignRequest struct {
 	Name       string   `json:"name" binding:"required"`
 	Phone      []string `json:"phone" binding:"required,min=1"`
 	SendSync   string   `json:"send_sync" binding:"required"`
+	Timezone   string   `json:"timezone"` // Required for scheduled campaigns (e.g., "Asia/Jakarta", "America/New_York")
 }
 
 // CampaignResponse represents response for campaign operations
@@ -188,6 +190,7 @@ type BulkCampaignResponse struct {
 		TotalRecipients int        `json:"total_recipients"`
 		Status          string     `json:"status"`
 		ScheduledAt     *time.Time `json:"scheduled_at,omitempty"`
+		Timezone        string     `json:"timezone,omitempty"`
 	} `json:"data,omitempty"`
 }
 
