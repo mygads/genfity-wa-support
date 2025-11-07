@@ -129,6 +129,10 @@ CREATE TABLE whatsappmessagestats (
 - `GET /session/s3/config` - Get S3 config
 - `POST /session/s3/test` - Test S3
 - `DELETE /session/s3/config` - Delete S3 config
+- `POST /session/hmac/config` - Configure HMAC key for webhook signing
+- `GET /session/hmac/config` - Get HMAC configuration status
+- `DELETE /session/hmac/config` - Delete HMAC configuration
+- `POST /session/history` - Configure message history storage (0 to disable, positive number to enable)
 
 ### Webhook Endpoints
 - `GET /webhook` - Get webhook
@@ -148,10 +152,12 @@ CREATE TABLE whatsappmessagestats (
 - `POST /chat/send/contact` - Send contact
 - `POST /chat/send/template` - Send template
 - `POST /chat/send/edit` - Edit message
+- `POST /chat/send/poll` - Send poll to group
 - `POST /chat/markread` - Mark as read
 - `POST /chat/react` - React to message
 - `POST /chat/presence` - Set chat presence
 - `POST /chat/delete` - Delete message
+- `GET /chat/history` - Get message history for a chat (requires history to be enabled)
 
 ### User Endpoints
 - `POST /user/check` - Check users
@@ -159,6 +165,10 @@ CREATE TABLE whatsappmessagestats (
 - `POST /user/presence` - Set global presence
 - `POST /user/avatar` - Get user avatar
 - `GET /user/contacts` - Get contacts
+- `GET /user/lid/:jid` - Get User Linked ID (LID) for a specific JID
+
+### Status Endpoints
+- `POST /status/set/text` - Set WhatsApp profile status message
 
 ### Group Endpoints
 - `POST /group/create` - Create group
