@@ -524,6 +524,9 @@ func isMessageEndpoint(path string) bool {
 		"/chat/send/template",
 		"/chat/send/edit",
 		"/chat/send/poll",
+		"/chat/send/buttons",
+		"/chat/send/list",
+		"/status/set/text",
 	}
 
 	for _, endpoint := range messageEndpoints {
