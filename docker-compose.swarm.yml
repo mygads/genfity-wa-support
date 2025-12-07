@@ -1,0 +1,99 @@
+# ===================================================================================
+# WHATSAPP SUPPORT (GENFITY-WA-SUPPORT) - DOCKER COMPOSE (SWARM MODE)
+# ===================================================================================
+# 
+# Gateway service untuk WhatsApp API dengan subscription validation & rate limiting
+# Uses pre-built images from GitHub Container Registry (GHCR)
+# All values MUST be set in .env file
+#
+# USAGE:
+#   cp .env.example .env   # Edit with your values
+#   docker stack deploy -c docker-compose.swarm.yml wa-support
+#
+# UPDATE:
+#   docker service update --image ghcr.io/mygads/genfity-wa-support:latest wa-support_wa-support
+#
+# ===================================================================================
+
+services:
+  wa-support:
+    image: ghcr.io/mygads/genfity-wa-support:${IMAGE_TAG}
+    environment:
+      # Primary Database
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      DB_SSLMODE: ${DB_SSLMODE}
+      
+      # Transactional Database
+      TRANSACTIONAL_DB_HOST: ${TRANSACTIONAL_DB_HOST}
+      TRANSACTIONAL_DB_PORT: ${TRANSACTIONAL_DB_PORT}
+      TRANSACTIONAL_DB_USER: ${TRANSACTIONAL_DB_USER}
+      TRANSACTIONAL_DB_PASSWORD: ${TRANSACTIONAL_DB_PASSWORD}
+      TRANSACTIONAL_DB_NAME: ${TRANSACTIONAL_DB_NAME}
+      TRANSACTIONAL_DB_SSLMODE: ${TRANSACTIONAL_DB_SSLMODE}
+      
+      # Application
+      PORT: ${PORT}
+      TZ: ${TZ}
+      GIN_MODE: ${GIN_MODE}
+      LOG_LEVEL: ${LOG_LEVEL}
+      
+      # Gateway Configuration
+      GATEWAY_MODE: ${GATEWAY_MODE}
+      RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-60}
+      DEFAULT_RATE_LIMIT: ${DEFAULT_RATE_LIMIT:-100}
+      
+      # WhatsApp API Backend
+      WA_SERVER_URL: ${WA_SERVER_URL}
+      WA_ADMIN_TOKEN: ${WA_ADMIN_TOKEN}
+      
+      # Authentication
+      WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN}
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+    networks:
+      - wa-network
+      - infra-network
+    deploy:
+      mode: replicated
+      replicas: 1
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        order: start-first
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      # Router for wa-support
+      - "traefik.http.routers.wa-support.rule=Host(`wa-support.govconnect.my.id`)"
+      - "traefik.http.routers.wa-support.entrypoints=websecure"
+      - "traefik.http.routers.wa-support.tls.certresolver=letsencrypt"
+      - "traefik.http.services.wa-support.loadbalancer.server.port=8082"
+
+networks:
+  wa-network:
+    external: true
+    name: wa-network
+  infra-network:
+    external: true
+    name: infra-network

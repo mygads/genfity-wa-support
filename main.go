@@ -75,6 +75,14 @@ func main() {
 		// Newsletter endpoints (validate subscription)
 		wa.Any("/newsletter", handlers.WhatsAppGateway)       // Handle exact /wa/newsletter
 		wa.Any("/newsletter/*path", handlers.WhatsAppGateway) // Handle /wa/newsletter/...
+
+		// Status endpoints (validate subscription)
+		wa.Any("/status", handlers.WhatsAppGateway)       // Handle exact /wa/status
+		wa.Any("/status/*path", handlers.WhatsAppGateway) // Handle /wa/status/...
+
+		// Call endpoints (validate subscription)
+		wa.Any("/call", handlers.WhatsAppGateway)       // Handle exact /wa/call
+		wa.Any("/call/*path", handlers.WhatsAppGateway) // Handle /wa/call/...
 	}
 
 	// Original webhook routes for receiving events from WA server (separate from gateway)
