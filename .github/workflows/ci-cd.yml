@@ -150,10 +150,7 @@ jobs:
         run: |
           echo "🚀 Deploying WA-Support to VPS..."
           
-          # Copy swarm config
-          scp docker-compose.swarm.yml $VPS_USER@$VPS_HOST:/opt/apps/wa-support/
-          
-          # Deploy
+          # Deploy with Docker Swarm
           ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
             cd /opt/apps/wa-support
             
@@ -163,15 +160,10 @@ jobs:
             # Pull latest image
             docker pull ghcr.io/${{ env.IMAGE_NAME }}:latest
             
-            # Initialize swarm if needed
-            if ! docker info | grep -q "Swarm: active"; then
-              docker swarm init --advertise-addr $(hostname -I | awk '{print $1}') || true
-            fi
-            
-            # Deploy stack
+            # Deploy/Update stack
             docker stack deploy -c docker-compose.swarm.yml wa-support --with-registry-auth
             
-            echo "✅ Deployment initiated!"
+            echo "✅ Deployment complete!"
           ENDSSH
 
       - name: Health Check
@@ -194,7 +186,7 @@ jobs:
             done
             
             echo "❌ Health check failed!"
-            docker service logs wa-support_wa-support --tail 50
+            docker service logs wa-support_wa-support --tail 50 2>/dev/null || true
             exit 1
           ENDSSH
 
