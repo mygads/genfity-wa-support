@@ -1,35 +1,89 @@
-name: Build and Push Docker Image
+name: WA Support CI/CD
 
 on:
   push:
-    branches: [main]
-    paths:
-      - '**'
-      - '.github/workflows/**'
+    branches: [ main, master, develop ]
   pull_request:
-    branches: [main]
-  workflow_dispatch:
+    branches: [ main, master ]
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository_owner }}/genfity-wa-support
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push:
+  # ===================================================================================
+  # BUILD & TEST JOB
+  # ===================================================================================
+  build-and-test:
     runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: wa_support_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Run linting
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+
+      - name: Build application
+        run: go build -v ./...
+
+  # ===================================================================================
+  # DOCKER BUILD & PUSH JOB
+  # ===================================================================================
+  docker-build-push:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    
     permissions:
       contents: read
       packages: write
+      id-token: write
 
     steps:
-      - name: Checkout repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Container Registry
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -44,34 +98,81 @@ jobs:
           tags: |
             type=ref,event=branch
             type=ref,event=pr
-            type=sha,prefix=
+            type=sha,prefix={{branch}}-
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64
 
-      - name: Summary
-        if: github.event_name != 'pull_request'
+  # ===================================================================================
+  # DEPLOY TO VPS JOB
+  # ===================================================================================
+  deploy-to-vps:
+    needs: docker-build-push
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    
+    steps:
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }}
+          script: |
+            # Navigate to deployment directory
+            cd /opt/apps/wa-support
+            
+            # Pull latest changes
+            git pull origin main
+            
+            # Update environment variables if needed
+            if [ ! -f .env ]; then
+              cp .env.example .env
+              sed -i 's/your_postgres_password_here/${{ secrets.POSTGRES_PASSWORD }}/g' .env
+              sed -i 's/genfity-wa-admin-token-2025/${{ secrets.WA_ADMIN_TOKEN }}/g' .env
+            fi
+            
+            # Pull latest Docker image
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            
+            # Stop and remove existing containers
+            docker-compose down || true
+            
+            # Start services with latest image
+            docker-compose up -d
+            
+            # Wait for services to be healthy
+            sleep 30
+            
+            # Check deployment status
+            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+            
+            # Test application health
+            curl -f http://localhost:8082/health || echo "Health check failed"
+
+  # ===================================================================================
+  # NOTIFICATION JOB
+  # ===================================================================================
+  notify:
+    needs: [build-and-test, docker-build-push, deploy-to-vps]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Notify deployment status
         run: |
-          echo "## 🚀 Docker Image Published" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Image:** \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Deploy Command" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-          echo "docker service update --image ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest wa-support_wa-support" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.deploy-to-vps.result }}" == "success" ]; then
+            echo "✅ WA Support deployed successfully!"
+          else
+            echo "❌ WA Support deployment failed!"
+          fi
