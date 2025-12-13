@@ -17,7 +17,7 @@
 
 services:
   wa-support:
-    image: ghcr.io/mygads/genfity-wa-support:${IMAGE_TAG}
+    image: ghcr.io/mygads/genfity-wa-support:${IMAGE_TAG:-latest}
     environment:
       # Primary Database
       DB_HOST: ${DB_HOST}
