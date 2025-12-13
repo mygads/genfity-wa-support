@@ -1,53 +1,57 @@
-name: WA Support CI/CD
+# ===================================================================================
+# WA-SUPPORT (GENFITY-WA-SUPPORT) - CI/CD PIPELINE
+# ===================================================================================
+# 
+# Build Go application and deploy to VPS using Docker Swarm
+# Triggers on push to main branch or manual dispatch
+#
+# Required Secrets:
+#   - GHCR_TOKEN: GitHub Container Registry token
+#   - VPS_HOST: VPS IP address
+#   - VPS_USER: SSH username
+#   - VPS_SSH_KEY: SSH private key
+#
+# ===================================================================================
+
+name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   pull_request:
-    branches: [ main, master ]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_only:
+        description: 'Skip build, deploy existing image'
+        required: false
+        default: 'false'
+        type: boolean
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ${{ github.repository_owner }}/genfity-wa-support
 
 jobs:
   # ===================================================================================
-  # BUILD & TEST JOB
+  # TEST JOB
   # ===================================================================================
-  build-and-test:
+  test:
+    name: Test
     runs-on: ubuntu-latest
-    
-    services:
-      postgres:
-        image: pgvector/pgvector:pg17
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: test_password
-          POSTGRES_DB: wa_support_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
+    if: ${{ github.event.inputs.deploy_only != 'true' }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
-
-      - name: Cache Go modules
-        uses: actions/cache@v3
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+          go-version: '1.22'
+          cache: true
 
       - name: Download dependencies
         run: go mod download
@@ -55,30 +59,26 @@ jobs:
       - name: Run tests
         run: go test -v ./...
 
-      - name: Run linting
-        uses: golangci/golangci-lint-action@v3
-        with:
-          version: latest
-
-      - name: Build application
-        run: go build -v ./...
+      - name: Run go vet
+        run: go vet ./...
 
   # ===================================================================================
-  # DOCKER BUILD & PUSH JOB
+  # BUILD JOB
   # ===================================================================================
-  docker-build-push:
-    needs: build-and-test
+  build:
+    name: Build & Push Image
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-    
+    needs: [test]
+    if: ${{ github.event.inputs.deploy_only != 'true' }}
     permissions:
       contents: read
       packages: write
-      id-token: write
+    
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -97,8 +97,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
-            type=ref,event=pr
-            type=sha,prefix={{branch}}-
+            type=sha,prefix=
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Docker image
@@ -110,69 +109,98 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
+
+      - name: Generate build summary
+        run: |
+          echo "## 🐳 Docker Image Built" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
 
   # ===================================================================================
-  # DEPLOY TO VPS JOB
+  # DEPLOY JOB
   # ===================================================================================
-  deploy-to-vps:
-    needs: docker-build-push
+  deploy:
+    name: Deploy to VPS
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-    
+    needs: [build]
+    if: |
+      always() && 
+      (needs.build.result == 'success' || github.event.inputs.deploy_only == 'true') &&
+      github.ref == 'refs/heads/main'
+    environment: production
+
     steps:
-      - name: Deploy to VPS
-        uses: appleboy/ssh-action@v1.0.3
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }}
-          script: |
-            # Navigate to deployment directory
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Add VPS to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to Docker Swarm
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          echo "🚀 Deploying WA-Support to VPS..."
+          
+          # Copy swarm config
+          scp docker-compose.swarm.yml $VPS_USER@$VPS_HOST:/opt/apps/wa-support/
+          
+          # Deploy
+          ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
             cd /opt/apps/wa-support
             
-            # Pull latest changes
-            git pull origin main
+            # Login to GHCR
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             
-            # Update environment variables if needed
-            if [ ! -f .env ]; then
-              cp .env.example .env
-              sed -i 's/your_postgres_password_here/${{ secrets.POSTGRES_PASSWORD }}/g' .env
-              sed -i 's/genfity-wa-admin-token-2025/${{ secrets.WA_ADMIN_TOKEN }}/g' .env
+            # Pull latest image
+            docker pull ghcr.io/${{ env.IMAGE_NAME }}:latest
+            
+            # Initialize swarm if needed
+            if ! docker info | grep -q "Swarm: active"; then
+              docker swarm init --advertise-addr $(hostname -I | awk '{print $1}') || true
             fi
             
-            # Pull latest Docker image
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            # Deploy stack
+            docker stack deploy -c docker-compose.swarm.yml wa-support --with-registry-auth
             
-            # Stop and remove existing containers
-            docker-compose down || true
-            
-            # Start services with latest image
-            docker-compose up -d
-            
-            # Wait for services to be healthy
-            sleep 30
-            
-            # Check deployment status
-            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-            
-            # Test application health
-            curl -f http://localhost:8082/health || echo "Health check failed"
+            echo "✅ Deployment initiated!"
+          ENDSSH
 
-  # ===================================================================================
-  # NOTIFICATION JOB
-  # ===================================================================================
-  notify:
-    needs: [build-and-test, docker-build-push, deploy-to-vps]
-    runs-on: ubuntu-latest
-    if: always()
-    
-    steps:
-      - name: Notify deployment status
+      - name: Health Check
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
         run: |
-          if [ "${{ needs.deploy-to-vps.result }}" == "success" ]; then
-            echo "✅ WA Support deployed successfully!"
-          else
-            echo "❌ WA Support deployment failed!"
-          fi
+          echo "🏥 Running health check..."
+          sleep 20
+          
+          ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
+            for i in {1..5}; do
+              if curl -sf http://localhost:8082/health > /dev/null; then
+                echo "✅ Health check passed!"
+                docker service ls | grep wa-support
+                exit 0
+              fi
+              echo "Attempt $i failed, retrying..."
+              sleep 5
+            done
+            
+            echo "❌ Health check failed!"
+            docker service logs wa-support_wa-support --tail 50
+            exit 1
+          ENDSSH
+
+      - name: Generate summary
+        if: success()
+        run: |
+          echo "## 🚀 WA-Support Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**URL:** https://wa.genfity.com" >> $GITHUB_STEP_SUMMARY
