@@ -163,6 +163,21 @@ jobs:
             # Restart with new image
             docker compose up -d --force-recreate
             
+            # ==================== DOCKER CLEANUP ====================
+            echo "🧹 Cleaning up old Docker resources..."
+            
+            # Remove old images (keep only latest)
+            docker images ghcr.io/mygads/genfity-wa-support --format '{{.Tag}}' | grep -v latest | xargs -I {} docker rmi ghcr.io/mygads/genfity-wa-support:{} 2>/dev/null || true
+            
+            # Prune unused images older than 24h
+            docker image prune -af --filter "until=24h" 2>/dev/null || true
+            
+            # Prune unused volumes
+            docker volume prune -f 2>/dev/null || true
+            
+            # Prune build cache older than 24h
+            docker builder prune -af --filter "until=24h" 2>/dev/null || true
+            
             echo "✅ Deployment complete!"
           ENDSSH
 
