@@ -158,15 +158,16 @@ jobs:
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         run: |
           echo "🚀 Deploying WA-Support to VPS..."
           
           # Deploy with Docker
-          ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
+          ssh $VPS_USER@$VPS_HOST << ENDSSH
             cd ~/genfity
             
             # Login to GHCR using PAT
-            echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u mygads --password-stdin
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u mygads --password-stdin
             
             # Pull latest image
             docker pull ghcr.io/mygads/genfity-wa-support:latest
