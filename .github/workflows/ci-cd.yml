@@ -167,20 +167,21 @@ jobs:
             cd ~/genfity
             
             # Login to GHCR using PAT
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u mygads --password-stdin
+            echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u mygads --password-stdin
             
             # Pull latest image
-            docker pull ghcr.io/mygads/genfity-wa-support:latest
+            sudo docker pull ghcr.io/mygads/genfity-wa-support:latest
             
             # Stop and remove old container
-            docker stop wa-support 2>/dev/null || true
-            docker rm wa-support 2>/dev/null || true
+            sudo docker stop wa-support 2>/dev/null || true
+            sudo docker rm wa-support 2>/dev/null || true
             
             # Run new container
-            docker run -d \
+            sudo docker run -d \
               --name wa-support \
               --restart unless-stopped \
               --network genfity-network \
+              --add-host=host.docker.internal:host-gateway \
               --env-file ~/genfity/wa-support/.env \
               -p 127.0.0.1:8082:8082 \
               --health-cmd="wget --no-verbose --tries=1 --spider http://localhost:8082/health || exit 1" \
@@ -193,13 +194,13 @@ jobs:
             echo "🧹 Cleaning up old Docker resources..."
             
             # Remove old images (keep only latest)
-            docker images ghcr.io/mygads/genfity-wa-support --format '{{.Tag}}' | grep -v latest | xargs -I {} docker rmi ghcr.io/mygads/genfity-wa-support:{} 2>/dev/null || true
+            sudo docker images ghcr.io/mygads/genfity-wa-support --format '{{.Tag}}' | grep -v latest | xargs -I {} sudo docker rmi ghcr.io/mygads/genfity-wa-support:{} 2>/dev/null || true
             
             # Prune unused images older than 24h
-            docker image prune -af --filter "until=24h" 2>/dev/null || true
+            sudo docker image prune -af --filter "until=24h" 2>/dev/null || true
             
             # Prune build cache older than 24h
-            docker builder prune -af --filter "until=24h" 2>/dev/null || true
+            sudo docker builder prune -af --filter "until=24h" 2>/dev/null || true
             
             echo "✅ Deployment complete!"
           ENDSSH
@@ -216,7 +217,7 @@ jobs:
             for i in {1..5}; do
               if curl -sf http://localhost:8082/health > /dev/null 2>&1; then
                 echo "✅ Health check passed!"
-                docker ps | grep wa-support
+                sudo docker ps | grep wa-support
                 exit 0
               fi
               echo "Attempt $i failed, retrying..."
@@ -224,7 +225,7 @@ jobs:
             done
             
             echo "❌ Health check failed!"
-            docker logs wa-support --tail 50
+            sudo docker logs wa-support --tail 50
             exit 1
           ENDSSH
 
@@ -260,6 +261,6 @@ jobs:
         run: |
           ssh $VPS_USER@$VPS_HOST << 'ENDSSH'
             echo "🧹 Running scheduled cleanup..."
-            docker system prune -f --filter "until=24h"
+            sudo docker system prune -f --filter "until=24h"
             echo "✅ Cleanup complete!"
           ENDSSH
