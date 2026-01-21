@@ -144,15 +144,18 @@ jobs:
           ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
 
       - name: Update ENV file on server
-        if: ${{ vars.ENV_FILE != '' || secrets.ENV_FILE != '' }}
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           ENV_FILE: ${{ secrets.ENV_FILE }}
         run: |
-          echo "📝 Updating .env file on server..."
-          echo "$ENV_FILE" | ssh $VPS_USER@$VPS_HOST "cat > ~/genfity/wa-support/.env"
-          echo "✅ ENV file updated!"
+          if [ -n "$ENV_FILE" ]; then
+            echo "📝 Updating .env file on server..."
+            echo "$ENV_FILE" | ssh $VPS_USER@$VPS_HOST "cat > ~/genfity/wa-support/.env"
+            echo "✅ ENV file updated!"
+          else
+            echo "⏭️ ENV_FILE secret not set, skipping .env update"
+          fi
 
       - name: Deploy with Docker
         env:
