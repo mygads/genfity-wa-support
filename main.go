@@ -41,8 +41,9 @@ func main() {
 	// Home page
 	router.GET("/", handlers.HomePage)
 
-	// Health check
+	// Health check - support both GET and HEAD methods
 	router.GET("/health", handlers.HealthCheck)
+	router.HEAD("/health", handlers.HealthCheck)
 
 	// WhatsApp Gateway routes - All WA API requests go through this gateway with /wa prefix
 	// Admin routes bypass subscription checks, other routes validate subscription
