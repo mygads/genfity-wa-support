@@ -173,8 +173,9 @@ jobs:
           ssh $VPS_USER@$VPS_HOST << ENDSSH
             cd ~/genfity/wa-support
             
-            # Pull latest changes (docker-compose.yml, etc)
-            git pull origin main
+            # Force pull latest changes (override local, no conflicts)
+            git fetch origin main
+            git reset --hard origin/main
             
             # Login to GHCR
             echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u mygads --password-stdin
