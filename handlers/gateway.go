@@ -615,3 +615,28 @@ func trackMessageStats(userID, token, path string, c *gin.Context, success bool)
 		log.Printf("Failed to query message stats: %v", err)
 	}
 }
+
+// DirectAdminGateway handles direct /admin/* requests from genfity-app backend
+// These bypass subscription validation since they use admin token authentication
+func DirectAdminGateway(c *gin.Context) {
+	path := c.Request.URL.Path
+	method := c.Request.Method
+
+	log.Printf("DEBUG: DirectAdminGateway - Method: %s, Path: %s", method, path)
+
+	// Verify admin token from Authorization header
+	adminToken := os.Getenv("WA_ADMIN_TOKEN")
+	authHeader := c.GetHeader("Authorization")
+	
+	if authHeader == "" || authHeader != adminToken {
+		log.Printf("DEBUG: DirectAdminGateway - Invalid or missing admin token")
+		c.JSON(http.StatusUnauthorized, models.GatewayResponse{
+			Status:  http.StatusUnauthorized,
+			Message: "Invalid admin token",
+		})
+		return
+	}
+
+	// Proxy directly to WA server
+	proxyToWAServer(c, path)
+}

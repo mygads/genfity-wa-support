@@ -45,6 +45,14 @@ func main() {
 	router.GET("/health", handlers.HealthCheck)
 	router.HEAD("/health", handlers.HealthCheck)
 
+	// Direct admin routes (bypass gateway, use Authorization header)
+	// These are called by genfity-app backend for session management
+	admin := router.Group("/admin")
+	{
+		admin.Any("", handlers.DirectAdminGateway)
+		admin.Any("/*path", handlers.DirectAdminGateway)
+	}
+
 	// WhatsApp Gateway routes - All WA API requests go through this gateway with /wa prefix
 	// Admin routes bypass subscription checks, other routes validate subscription
 	wa := router.Group("/wa")
