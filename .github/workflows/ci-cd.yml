@@ -1,15 +1,14 @@
 # ===================================================================================
 # WA-SUPPORT (GENFITY-WA-SUPPORT) - CI/CD PIPELINE
 # ===================================================================================
-# 
-# Build Go application and deploy to VPS using Docker Swarm
-# Triggers on push to main branch or manual dispatch
+#
+# Build and deploy using docker compose
+# Config deployment ada di docker-compose.yml (single source of truth)
 #
 # Required Secrets:
 #   - GHCR_TOKEN: GitHub Container Registry token
-#   - VPS_HOST: VPS IP address
-#   - VPS_USER: SSH username
-#   - VPS_SSH_KEY: SSH private key
+#   - VPS_HOST, VPS_USER, VPS_SSH_KEY: SSH access
+#   - ENV_FILE: Production .env content
 #
 # ===================================================================================
 
@@ -163,53 +162,30 @@ jobs:
             echo "⏭️ ENV_FILE secret not set, skipping .env update"
           fi
 
-      - name: Deploy with Docker
+      - name: Deploy with Docker Compose
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
         run: |
-          echo "🚀 Deploying WA-Support to VPS..."
+          echo "🚀 Deploying with docker compose..."
           
-          # Deploy with Docker
           ssh $VPS_USER@$VPS_HOST << ENDSSH
-            cd ~/genfity
+            cd ~/genfity/wa-support
             
-            # Login to GHCR using PAT
+            # Login to GHCR
             echo "$GHCR_TOKEN" | sudo docker login ghcr.io -u mygads --password-stdin
             
-            # Pull latest image
-            sudo docker pull ghcr.io/mygads/genfity-wa-support:latest
+            # Set image and deploy using docker compose
+            export IMAGE=ghcr.io/mygads/genfity-wa-support:latest
             
-            # Stop and remove old container
-            sudo docker stop wa-support 2>/dev/null || true
-            sudo docker rm wa-support 2>/dev/null || true
+            # Pull and recreate
+            sudo -E docker compose pull
+            sudo -E docker compose up -d --force-recreate
             
-            # Run new container
-            sudo docker run -d \
-              --name wa-support \
-              --restart unless-stopped \
-              --network genfity-network \
-              --add-host=host.docker.internal:host-gateway \
-              --env-file ~/genfity/wa-support/.env \
-              -p 127.0.0.1:8082:8082 \
-              --health-cmd="wget --no-verbose --tries=1 --spider http://localhost:8082/health || exit 1" \
-              --health-interval=30s \
-              --health-timeout=10s \
-              --health-retries=3 \
-              ghcr.io/mygads/genfity-wa-support:latest
-            
-            # ==================== DOCKER CLEANUP ====================
-            echo "🧹 Cleaning up old Docker resources..."
-            
-            # Remove old images (keep only latest)
-            sudo docker images ghcr.io/mygads/genfity-wa-support --format '{{.Tag}}' | grep -v latest | xargs -I {} sudo docker rmi ghcr.io/mygads/genfity-wa-support:{} 2>/dev/null || true
-            
-            # Prune unused images older than 24h
+            # Cleanup old images
+            echo "🧹 Cleaning up..."
             sudo docker image prune -af --filter "until=24h" 2>/dev/null || true
-            
-            # Prune build cache older than 24h
-            sudo docker builder prune -af --filter "until=24h" 2>/dev/null || true
             
             echo "✅ Deployment complete!"
           ENDSSH

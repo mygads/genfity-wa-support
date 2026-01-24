@@ -1,76 +1,44 @@
 # ===================================================================================
-# WHATSAPP SUPPORT (GENFITY-WA-SUPPORT) - DOCKER COMPOSE (LOCAL DEVELOPMENT)
+# WHATSAPP SUPPORT (GENFITY-WA-SUPPORT) - DOCKER COMPOSE
 # ===================================================================================
-# 
-# Gateway service untuk WhatsApp API dengan subscription validation & rate limiting
-# Builds images locally from source code
-# All values MUST be set in .env file
+#
+# Single docker-compose for production deployment.
+# For development, use: go run .
 #
 # USAGE:
-#   cp .env.example .env   # Edit with your values
-#   docker compose up -d --build
+#   Local test:  docker compose up -d --build
+#   CI/CD:       IMAGE=ghcr.io/mygads/genfity-wa-support:latest docker compose up -d --pull always
 #
 # ===================================================================================
 
 services:
   wa-support:
+    image: ${IMAGE:-genfity-wa-support:local}
     build:
       context: .
       dockerfile: Dockerfile
-    image: genfity-wa-support:local
     container_name: wa-support
     ports:
-      - "${PORT}:${PORT}"
-    environment:
-      # Primary Database
-      DB_HOST: ${DB_HOST}
-      DB_PORT: ${DB_PORT}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME}
-      DB_SSLMODE: ${DB_SSLMODE}
-      
-      # Transactional Database
-      TRANSACTIONAL_DB_HOST: ${TRANSACTIONAL_DB_HOST}
-      TRANSACTIONAL_DB_PORT: ${TRANSACTIONAL_DB_PORT}
-      TRANSACTIONAL_DB_USER: ${TRANSACTIONAL_DB_USER}
-      TRANSACTIONAL_DB_PASSWORD: ${TRANSACTIONAL_DB_PASSWORD}
-      TRANSACTIONAL_DB_NAME: ${TRANSACTIONAL_DB_NAME}
-      TRANSACTIONAL_DB_SSLMODE: ${TRANSACTIONAL_DB_SSLMODE}
-      
-      # Application
-      PORT: ${PORT}
-      TZ: ${TZ}
-      GIN_MODE: ${GIN_MODE}
-      LOG_LEVEL: ${LOG_LEVEL}
-      
-      # Gateway Configuration
-      GATEWAY_MODE: ${GATEWAY_MODE}
-      RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-60}
-      DEFAULT_RATE_LIMIT: ${DEFAULT_RATE_LIMIT:-100}
-      
-      # WhatsApp API Backend
-      WA_SERVER_URL: ${WA_SERVER_URL}
-      WA_ADMIN_TOKEN: ${WA_ADMIN_TOKEN}
-      
-      # Authentication
-      WEBHOOK_VERIFY_TOKEN: ${WEBHOOK_VERIFY_TOKEN}
-      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      - "127.0.0.1:8082:8082"
+    env_file:
+      - .env
     networks:
-      - wa-network
+      - genfity-network
       - infra-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${PORT}/health"]
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8082/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
 
 networks:
-  wa-network:
+  genfity-network:
     external: true
-    name: wa-network
+    name: genfity-network
   infra-network:
     external: true
     name: infra-network
