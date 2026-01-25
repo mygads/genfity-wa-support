@@ -673,9 +673,9 @@ func processBulkCampaign(bulkCampaignID uint) {
 	}
 
 	// Get WhatsApp server URL
-	whatsappServerURL := os.Getenv("WHATSAPP_SERVER_URL")
+	whatsappServerURL := os.Getenv("WA_SERVER_URL")
 	if whatsappServerURL == "" {
-		whatsappServerURL = "https://wa.genfity.com"
+		whatsappServerURL = "http://wa-api:8080"
 	}
 
 	// Process each item

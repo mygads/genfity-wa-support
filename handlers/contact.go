@@ -57,9 +57,9 @@ func BulkContactSync(c *gin.Context) {
 	}
 
 	// Get base URL for external WhatsApp server
-	baseURL := os.Getenv("WHATSAPP_SERVER_URL")
+	baseURL := os.Getenv("WA_SERVER_URL")
 	if baseURL == "" {
-		baseURL = "https://wa.genfity.com"
+		baseURL = "http://wa-api:8080"
 	}
 
 	// Make request to external WhatsApp server
