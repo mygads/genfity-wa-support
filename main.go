@@ -57,6 +57,11 @@ func main() {
 	// Admin routes bypass subscription checks, other routes validate subscription
 	wa := router.Group("/wa")
 	{
+		// Session settings - authenticated by session token header (no admin auth needed)
+		// Used by external services to update auto_read, chat_log settings
+		wa.GET("/session/settings", handlers.GetUserSettings)
+		wa.PUT("/session/settings", handlers.UpdateUserSettings)
+
 		// Admin endpoints (bypass all validation)
 		wa.Any("/admin", handlers.WhatsAppGateway)       // Handle exact /wa/admin
 		wa.Any("/admin/*path", handlers.WhatsAppGateway) // Handle /wa/admin/...

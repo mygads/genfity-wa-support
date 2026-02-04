@@ -398,3 +398,106 @@ func UpdateMessageStatus(db *gorm.DB, messageID, status string) error {
 		Where("message_id = ?", messageID).
 		Updates(updates).Error
 }
+
+// GetUserSettings retrieves settings for the authenticated session
+// Uses token header for authentication (same as WA API)
+func GetUserSettings(c *gin.Context) {
+	token := c.GetHeader("token")
+	if token == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "token header is required"})
+		return
+	}
+
+	db := database.GetDB()
+
+	var userSettings models.UserSettings
+	result := db.Where("user_token = ?", token).First(&userSettings)
+
+	if result.Error != nil {
+		// Return defaults if not found
+		c.JSON(http.StatusOK, gin.H{
+			"user_settings": gin.H{
+				"user_token":        token,
+				"chat_log_enabled":  false,
+				"auto_read_enabled": false,
+				"webhook_url":       "",
+				"display_name":      "",
+				"is_active":         true,
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"user_settings": userSettings,
+	})
+}
+
+// UpdateUserSettings updates settings for the authenticated session
+// Uses token header for authentication (same as WA API)
+func UpdateUserSettings(c *gin.Context) {
+	token := c.GetHeader("token")
+	if token == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "token header is required"})
+		return
+	}
+
+	db := database.GetDB()
+
+	var updateData struct {
+		ChatLogEnabled  *bool   `json:"chat_log_enabled"`
+		AutoReadEnabled *bool   `json:"auto_read_enabled"`
+		WebhookURL      *string `json:"webhook_url"`
+		DisplayName     *string `json:"display_name"`
+	}
+
+	if err := c.ShouldBindJSON(&updateData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON data"})
+		return
+	}
+
+	// Find or create user settings
+	var userSettings models.UserSettings
+	result := db.Where("user_token = ?", token).First(&userSettings)
+
+	if result.Error != nil {
+		// Create new user settings
+		userSettings = models.UserSettings{
+			UserToken: token,
+			IsActive:  true,
+		}
+	}
+
+	// Update fields if provided
+	if updateData.ChatLogEnabled != nil {
+		userSettings.ChatLogEnabled = *updateData.ChatLogEnabled
+	}
+	if updateData.AutoReadEnabled != nil {
+		userSettings.AutoReadEnabled = *updateData.AutoReadEnabled
+	}
+	if updateData.WebhookURL != nil {
+		userSettings.WebhookURL = *updateData.WebhookURL
+	}
+	if updateData.DisplayName != nil {
+		userSettings.DisplayName = *updateData.DisplayName
+	}
+
+	// Save or create
+	if result.Error != nil {
+		if err := db.Create(&userSettings).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user settings"})
+			return
+		}
+	} else {
+		if err := db.Save(&userSettings).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user settings"})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":        "success",
+		"message":       "User settings updated successfully",
+		"user_settings": userSettings,
+	})
+}
