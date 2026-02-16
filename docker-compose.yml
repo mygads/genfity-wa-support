@@ -25,6 +25,7 @@ services:
     networks:
       - genfity-network
       - infra-network
+      - govconnect-network
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -42,3 +43,6 @@ networks:
   infra-network:
     external: true
     name: infra-network
+  govconnect-network:
+    external: true
+    name: govconnect-network
