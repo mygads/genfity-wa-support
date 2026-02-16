@@ -1,123 +1,63 @@
-# WhatsApp Support (genfity-wa-support)
+# Genfity WA Support (Normalized)
 
-Gateway service untuk WhatsApp API dengan subscription validation, rate limiting, dan request proxying.
+Service ini sekarang menjadi gateway WA mandiri dengan database sendiri, tanpa ketergantungan validasi subscription ke `genfity-app`.
 
-## 📋 Deskripsi
+## Scope Baru
 
-Service ini berfungsi sebagai:
-- **Gateway Proxy** - Meneruskan requests ke WhatsApp API (genfity-wa)
-- **Subscription Validation** - Memvalidasi subscription user sebelum request
-- **Rate Limiting** - Membatasi request per user/session
-- **Webhook Handler** - Menerima dan memproses webhook events
+- Menyimpan `user_id` + subscription WA di DB internal.
+- Menyimpan session WA per user (`1 user_id` bisa punya banyak session).
+- Menyimpan setting per session (`auto_read`, `typing`, `webhook`) dan statistik pesan per session.
+- API internal (antar service) menggunakan `x-internal-api-key`.
+- API customer/public menggunakan `x-api-key` per user.
+- Request WA API tetap diproxy ke `genfity-wa`, termasuk sinkronisasi session.
+- Fitur lama dihapus: campaign/blast, message history, event webhook storage, chat room/chat message persistence.
 
-## 🏗️ Architecture
+## Endpoint Utama
 
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│                 │     │                 │     │                 │
-│   Client/App    │────▶│   wa-support    │────▶│     wa-api      │
-│                 │     │   (Gateway)     │     │   (WhatsApp)    │
-│                 │     │                 │     │                 │
-└─────────────────┘     └────────┬────────┘     └─────────────────┘
-                                 │
-                                 ▼
-                        ┌─────────────────┐
-                        │                 │
-                        │    PostgreSQL   │
-                        │   (wa_support)  │
-                        │                 │
-                        └─────────────────┘
-```
+Dokumentasi API lengkap (khusus endpoint non-provider): lihat `API.md`.
 
-## 🚀 Quick Start
+### Public Customer
+- `GET /v1/me`
+- `GET /v1/sessions`
+- `POST /v1/sessions`
+- `PUT /v1/sessions/:session_id`
+- `DELETE /v1/sessions/:session_id`
+- `GET /v1/sessions/:session_id/settings`
+- `PUT /v1/sessions/:session_id/settings`
+- `GET /v1/sessions/:session_id/contacts`
+- `POST /v1/sessions/:session_id/contacts/sync`
 
-### Local Development
-```bash
-# Copy environment file
-cp .env.example .env
-# Edit .env with your values
+Catatan kontak:
+- `GET /v1/sessions/:session_id/contacts` akan auto-sync dari `genfity-wa` secara default (`?sync=true`).
+- Gunakan `?sync=false` jika ingin baca cache DB lokal saja.
+- `genfity-wa` saat ini hanya expose `GET /user/contacts`, belum ada endpoint add contact manual.
 
-# Start with Docker Compose
-docker compose up -d --build
+### Internal Service-to-Service
+- `GET /internal/me` (cek key ini scoped ke source apa atau global)
+- `GET /internal/users?source=<service>&page=1&limit=20` (list user milik service tertentu)
+- `POST /internal/users` (create/upsert user + subscription)
+- `PUT /internal/users/:user_id` (update subscription)
+- `GET /internal/users/:user_id/apikey` (metadata)
+- `POST /internal/users/:user_id/apikey/rotate` (rotate dan return plaintext key baru)
 
-# Check logs
-docker compose logs -f wa-support
-```
+Format key internal di `.env`:
+- `INTERNAL_API_KEYS=service-a:keyA,service-b:keyB`
+- Key scoped hanya boleh akses user dengan `source_service` yang sama.
+- Format key lama tanpa `service:` tetap didukung sebagai key global.
 
-### Production (Docker Swarm)
-```bash
-# Copy environment file
-cp .env.example .env
-# Edit .env with production values
+### Token Session Gateway
+- `ANY /wa/*` dengan `token` atau `Authorization: Bearer <token>`
+- Path admin `'/wa/admin*'` diblokir agar tidak terekspos ke public.
 
-# Deploy stack
-docker stack deploy -c docker-compose.swarm.yml wa-support
+## Security
 
-# Check status
-docker service ls
-docker service logs wa-support_wa-support
-```
+- Rate limiter dan anti-spam berbasis IP aktif untuk API publik.
+- Endpoint `/internal/*` dibypass dari limiter publik dan wajib `x-internal-api-key`.
+- API key customer disimpan dalam bentuk hash SHA-256.
+- Cron WIB (`Asia/Jakarta`) berjalan tiap menit untuk auto-set subscription `expired`.
 
-## 📁 File Structure
+## Menjalankan Service
 
-```
-wa-support/
-├── .env.example              # Environment template
-├── .env                      # Your environment (git ignored)
-├── docker-compose.yml        # Local development
-├── docker-compose.swarm.yml  # Production (uses GHCR images)
-├── Dockerfile                # Build configuration
-└── README.md                 # This file
-```
-
-## 🔧 Configuration
-
-### Required Environment Variables
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `DB_HOST` | PostgreSQL host | `postgres` |
-| `DB_PASSWORD` | PostgreSQL password | `secret` |
-| `DB_NAME` | Primary database name | `wa_support` |
-| `TRANSACTIONAL_DB_NAME` | Transaction database | `wa_support_tx` |
-| `WA_SERVER_URL` | WhatsApp API URL | `http://wa-api:8080` |
-| `WA_ADMIN_TOKEN` | Token untuk wa-api | `your_token` |
-| `ADMIN_TOKEN` | Admin access token | `your_admin_token` |
-
-### Optional Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GATEWAY_MODE` | `enabled` | Enable/disable gateway |
-| `RATE_LIMIT_WINDOW` | `60` | Rate limit window (seconds) |
-| `DEFAULT_RATE_LIMIT` | `100` | Max requests per window |
-| `LOG_LEVEL` | `info` | Log verbosity |
-
-## 🌐 Networks
-
-Service ini terhubung ke:
-- `wa-network` - Komunikasi dengan wa-api
-- `infra-network` - Akses ke PostgreSQL
-
-## 📡 Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /health` | Health check |
-| `GET /` | Home page |
-| `/wa/*` | Gateway proxy ke WhatsApp API |
-| `/webhook/wa` | Webhook receiver |
-| `GET /bulk/cron/process` | Cron job untuk bulk campaigns |
-
-## 🔄 CI/CD
-
-GitHub Actions workflow akan:
-1. Build Docker image on push to main
-2. Push to GitHub Container Registry (ghcr.io)
-3. Tag dengan commit SHA dan `latest`
-
-## 📊 Monitoring
-
-Service exposed di Traefik:
-- URL: `https://wa-support.govconnect.my.id`
-- Metrics tersedia di `/metrics` (jika diaktifkan)
+1. Copy `.env.example` ke `.env`.
+2. Isi variabel DB, `WA_SERVER_URL`, `WA_ADMIN_TOKEN`, `INTERNAL_API_KEYS`.
+3. Jalankan `go run .` atau `docker compose up -d --build`.

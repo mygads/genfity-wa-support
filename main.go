@@ -6,7 +6,6 @@ import (
 
 	"genfity-wa-support/database"
 	"genfity-wa-support/handlers"
-	"genfity-wa-support/middleware"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -20,6 +19,7 @@ func main() {
 
 	// Initialize database
 	database.InitDatabase()
+	database.StartSubscriptionExpiryCron()
 
 	// Setup Gin router
 	router := gin.Default()
@@ -28,7 +28,7 @@ func main() {
 	router.Use(func(c *gin.Context) {
 		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, token") // Added token header for WhatsApp session
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, token, x-api-key, x-internal-api-key")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -45,98 +45,33 @@ func main() {
 	router.GET("/health", handlers.HealthCheck)
 	router.HEAD("/health", handlers.HealthCheck)
 
-	// Direct admin routes (bypass gateway, use Authorization header)
-	// These are called by genfity-app backend for session management
-	admin := router.Group("/admin")
+	internal := router.Group("/internal")
+	internal.Use(handlers.InternalAPIKeyMiddleware())
 	{
-		admin.Any("", handlers.DirectAdminGateway)
-		admin.Any("/*path", handlers.DirectAdminGateway)
+		internal.GET("/me", handlers.InternalMe)
+		internal.GET("/users", handlers.InternalListUsers)
+		internal.POST("/users", handlers.InternalUpsertUser)
+		internal.PUT("/users/:user_id", handlers.InternalUpdateUser)
+		internal.GET("/users/:user_id/apikey", handlers.InternalGetUserAPIKey)
+		internal.POST("/users/:user_id/apikey/rotate", handlers.InternalRotateUserAPIKey)
 	}
 
-	// WhatsApp Gateway routes - All WA API requests go through this gateway with /wa prefix
-	// Admin routes bypass subscription checks, other routes validate subscription
+	public := router.Group("/v1")
+	public.Use(handlers.PublicRateLimiter(), handlers.CustomerAPIKeyMiddleware())
 	wa := router.Group("/wa")
+	wa.Use(handlers.PublicRateLimiter())
 	{
-		// Session settings - authenticated by session token header (no admin auth needed)
-		// Used by external services to update auto_read, chat_log settings
-		wa.GET("/session/settings", handlers.GetUserSettings)
-		wa.PUT("/session/settings", handlers.UpdateUserSettings)
+		public.GET("/me", handlers.GetCurrentUser)
+		public.GET("/sessions", handlers.ListSessions)
+		public.POST("/sessions", handlers.CreateSession)
+		public.PUT("/sessions/:session_id", handlers.UpdateSession)
+		public.DELETE("/sessions/:session_id", handlers.DeleteSession)
+		public.GET("/sessions/:session_id/settings", handlers.GetSessionSettings)
+		public.PUT("/sessions/:session_id/settings", handlers.UpdateSessionSettings)
+		public.GET("/sessions/:session_id/contacts", handlers.ListSessionContacts)
+		public.POST("/sessions/:session_id/contacts/sync", handlers.SyncSessionContacts)
 
-		// Admin endpoints (bypass all validation)
-		wa.Any("/admin", handlers.WhatsAppGateway)       // Handle exact /wa/admin
-		wa.Any("/admin/*path", handlers.WhatsAppGateway) // Handle /wa/admin/...
-
-		// Session endpoints (validate subscription + session limits)
-		wa.Any("/session", handlers.WhatsAppGateway)       // Handle exact /wa/session
-		wa.Any("/session/*path", handlers.WhatsAppGateway) // Handle /wa/session/...
-
-		// Webhook endpoints (validate subscription)
-		wa.Any("/webhook", handlers.WhatsAppGateway)       // Handle exact /wa/webhook
-		wa.Any("/webhook/*path", handlers.WhatsAppGateway) // Handle /wa/webhook/...
-
-		// Chat endpoints (validate subscription + message tracking)
-		wa.Any("/chat", handlers.WhatsAppGateway)       // Handle exact /wa/chat
-		wa.Any("/chat/*path", handlers.WhatsAppGateway) // Handle /wa/chat/...
-
-		// User endpoints (validate subscription)
-		wa.Any("/user", handlers.WhatsAppGateway)       // Handle exact /wa/user
-		wa.Any("/user/*path", handlers.WhatsAppGateway) // Handle /wa/user/...
-
-		// Group endpoints (validate subscription)
-		wa.Any("/group", handlers.WhatsAppGateway)       // Handle exact /wa/group
-		wa.Any("/group/*path", handlers.WhatsAppGateway) // Handle /wa/group/...
-
-		// Newsletter endpoints (validate subscription)
-		wa.Any("/newsletter", handlers.WhatsAppGateway)       // Handle exact /wa/newsletter
-		wa.Any("/newsletter/*path", handlers.WhatsAppGateway) // Handle /wa/newsletter/...
-
-		// Status endpoints (validate subscription)
-		wa.Any("/status", handlers.WhatsAppGateway)       // Handle exact /wa/status
-		wa.Any("/status/*path", handlers.WhatsAppGateway) // Handle /wa/status/...
-
-		// Call endpoints (validate subscription)
-		wa.Any("/call", handlers.WhatsAppGateway)       // Handle exact /wa/call
-		wa.Any("/call/*path", handlers.WhatsAppGateway) // Handle /wa/call/...
-	}
-
-	// Original webhook routes for receiving events from WA server (separate from gateway)
-	webhooks := router.Group("/webhook")
-	{
-		wa := webhooks.Group("/wa")
-		{
-			wa.GET("", handlers.VerifyWebhook)
-			wa.POST("", handlers.HandleWhatsAppWebhook)
-		}
-	}
-
-	// Public cron job endpoint (no authentication required)
-	router.GET("/bulk/cron/process", handlers.BulkCampaignCronJob)
-
-	// Bulk contact and campaign endpoints
-	bulk := router.Group("/bulk")
-	bulk.Use(middleware.JWTMiddleware()) // Use JWT authentication instead of session
-	{
-		// Contact management
-		bulk.POST("/contact/sync", handlers.BulkContactSync)
-		bulk.GET("/contact", handlers.BulkContactList)
-		bulk.POST("/contact/add", handlers.AddContacts)
-		bulk.DELETE("/contact/delete", handlers.BulkDeleteContacts)
-
-		// Campaign management endpoints
-		campaign := bulk.Group("/campaign")
-		{
-			campaign.POST("", handlers.CreateCampaign)
-			campaign.GET("", handlers.GetCampaigns)
-			campaign.GET("/:id", handlers.GetCampaign)
-			campaign.PUT("/:id", handlers.UpdateCampaign)
-			campaign.DELETE("/:id", handlers.DeleteCampaign)
-		}
-
-		// Bulk campaign execution endpoints
-		bulk.POST("/campaign/execute", handlers.CreateBulkCampaign)
-		bulk.GET("/campaigns", handlers.GetBulkCampaigns)
-		bulk.GET("/campaigns/:id", handlers.GetBulkCampaign)
-		bulk.DELETE("/campaigns/:id", handlers.DeleteBulkCampaign)
+		wa.Any("/*path", handlers.WhatsAppGateway)
 	}
 
 	// Get port from environment or default to 8070
@@ -146,7 +81,6 @@ func main() {
 	}
 
 	log.Printf("Server starting on port %s", port)
-	log.Printf("Gateway mode: %s", os.Getenv("GATEWAY_MODE"))
 	if err := router.Run(":" + port); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}
