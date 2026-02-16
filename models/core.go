@@ -74,8 +74,6 @@ type WhatsAppSession struct {
 	SessionName     string     `json:"session_name" gorm:"type:varchar(255)"`
 	SessionToken    string     `json:"session_token" gorm:"type:text;uniqueIndex"`
 	WebhookURL      string     `json:"webhook_url" gorm:"type:text"`
-	AutoReadEnabled bool       `json:"auto_read_enabled" gorm:"default:false"`
-	TypingEnabled   bool       `json:"typing_enabled" gorm:"default:false"`
 	Connected       bool       `json:"connected" gorm:"default:false"`
 	LoggedIn        bool       `json:"logged_in" gorm:"default:false"`
 	JID             string     `json:"jid" gorm:"type:varchar(255)"`

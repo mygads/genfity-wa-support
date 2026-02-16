@@ -24,8 +24,6 @@ type createSessionRequest struct {
 	Events        string `json:"events"`
 	ExpirationSec int    `json:"expiration_sec"`
 	AutoConnect   bool   `json:"auto_connect"`
-	AutoRead      bool   `json:"auto_read_enabled"`
-	Typing        bool   `json:"typing_enabled"`
 	History       int    `json:"history"`
 }
 
@@ -34,8 +32,6 @@ type updateSessionRequest struct {
 	WebhookURL    *string `json:"webhook_url"`
 	Events        *string `json:"events"`
 	ExpirationSec *int    `json:"expiration_sec"`
-	AutoRead      *bool   `json:"auto_read_enabled"`
-	Typing        *bool   `json:"typing_enabled"`
 	History       *int    `json:"history"`
 }
 
@@ -123,16 +119,14 @@ func CreateSession(c *gin.Context) {
 
 	now := time.Now()
 	session := models.WhatsAppSession{
-		UserID:          user.ID,
-		Provider:        sub.Provider,
-		SessionID:       waUserID,
-		SessionName:     req.SessionName,
-		SessionToken:    waToken,
-		WebhookURL:      waWebhook,
-		AutoReadEnabled: req.AutoRead,
-		TypingEnabled:   req.Typing,
-		Status:          "created",
-		LastSyncedAt:    &now,
+		UserID:       user.ID,
+		Provider:     sub.Provider,
+		SessionID:    waUserID,
+		SessionName:  req.SessionName,
+		SessionToken: waToken,
+		WebhookURL:   waWebhook,
+		Status:       "created",
+		LastSyncedAt: &now,
 	}
 	if err := database.GetDB().Create(&session).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to store session"})
@@ -195,14 +189,6 @@ func UpdateSession(c *gin.Context) {
 	}
 
 	updates := map[string]interface{}{"updated_at": time.Now()}
-	if req.AutoRead != nil {
-		updates["auto_read_enabled"] = *req.AutoRead
-		session.AutoReadEnabled = *req.AutoRead
-	}
-	if req.Typing != nil {
-		updates["typing_enabled"] = *req.Typing
-		session.TypingEnabled = *req.Typing
-	}
 	if req.WebhookURL != nil {
 		updates["webhook_url"] = *req.WebhookURL
 	}
@@ -247,8 +233,6 @@ func GetSessionSettings(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"session_id":          session.SessionID,
-		"auto_read_enabled":   session.AutoReadEnabled,
-		"typing_enabled":      session.TypingEnabled,
 		"webhook_url":         session.WebhookURL,
 		"message_stat_sent":   session.LastMessageSent,
 		"message_stat_failed": session.LastMessageFail,
@@ -265,9 +249,7 @@ func UpdateSessionSettings(c *gin.Context) {
 	}
 
 	var req struct {
-		AutoReadEnabled *bool   `json:"auto_read_enabled"`
-		TypingEnabled   *bool   `json:"typing_enabled"`
-		WebhookURL      *string `json:"webhook_url"`
+		WebhookURL *string `json:"webhook_url"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
@@ -275,12 +257,6 @@ func UpdateSessionSettings(c *gin.Context) {
 	}
 
 	updates := map[string]interface{}{"updated_at": time.Now()}
-	if req.AutoReadEnabled != nil {
-		updates["auto_read_enabled"] = *req.AutoReadEnabled
-	}
-	if req.TypingEnabled != nil {
-		updates["typing_enabled"] = *req.TypingEnabled
-	}
 	if req.WebhookURL != nil {
 		updates["webhook_url"] = *req.WebhookURL
 	}
@@ -386,10 +362,6 @@ func WhatsAppGateway(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"message": "message quota exceeded"})
 			return
 		}
-	}
-
-	if session.TypingEnabled && c.Request.Method == http.MethodPost && strings.HasPrefix(targetPath, "/chat/send") {
-		_, _, _ = proxyWithToken(http.MethodPost, "/chat/presence", session.SessionToken, map[string]interface{}{"state": "composing"})
 	}
 
 	status, body, err := proxyToWAServer(c, targetPath, false)
